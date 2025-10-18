@@ -81,7 +81,6 @@ const upload = multer({
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
-// ( /uploads の静的配信は不要になったので削除 )
 
 // 2. 一括アップロード（/upload）の処理
 app.post('/upload', upload.array('imageFiles', 100), async (req, res) => {
@@ -129,7 +128,7 @@ app.get('/download-csv', async (req, res) => {
             return;
         }
 
-        let csvContent = ",題S,URL\n"; // A列は空欄
+        let csvContent = ",題名,URL\n"; // A列は空欄
         rows.forEach(item => {
             const title = `"${item.title.replace(/"/g, '""')}"`;
             const url = `"${item.url.replace(/"/g, '""')}"`;
@@ -142,3 +141,13 @@ app.get('/download-csv', async (req, res) => {
         res.status(200).send(bom + csvContent);
     } catch (dbError) {
         console.error('Database select error:', dbError);
+        res.status(500).send('データベースからの読み込みに失敗しました。');
+    }
+});
+
+// --- サーバーの起動 ---
+app.listen(port, async () => {
+    // 起動時にDBテーブルが存在するか確認・作成する
+    await createTable(); 
+    console.log(`サーバーが http://localhost:${port} で起動しました`);
+});
