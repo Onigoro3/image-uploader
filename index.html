@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>画像アップローダー (一括対応版)</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; }
+        #uploadStatus { 
+            font-weight: bold;
+            color: green;
+        }
+        #csvDownloader {
+            display: block;
+            margin-top: 20px;
+            padding: 8px 12px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            text-align: center;
+            width: 150px;
+        }
+        #csvDownloader:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>画像をアップロード (複数選択可)</h2>
+    
+    <input type="file" id="imageInput" accept="image/*" multiple>
+    <button id="uploadButton">アップロード</button>
+    
+    <p id="uploadStatus"></p>
+
+    <hr>
+
+    <h3>履歴のダウンロード</h3>
+    <p>アップロードした画像の「題名」と「URL」のリストをCSVでダウンロードします。</p>
+    <a href="/download-csv" id="csvDownloader">CSVダウンロード</a>
+
+
+    <script>
+        document.getElementById('uploadButton').addEventListener('click', async () => {
+            const fileInput = document.getElementById('imageInput');
+            const statusP = document.getElementById('uploadStatus'); // ステータス表示用
+            
+            // 選択されたファイルの「リスト」(配列のようなもの) を取得
+            const files = fileInput.files; 
+            
+            if (files.length === 0) {
+                alert('画像が選択されていません。');
+                return;
+            }
+
+            // フォームデータを準備
+            const formData = new FormData();
+            
+            // ★選択されたファイルすべてをFormDataに追加
+            for (let i = 0; i < files.length; i++) {
+                // 'imageFiles' というキーでファイルを追加 (サーバー側と合わせる)
+                formData.append('imageFiles', files[i]);
+            }
+
+            // アップロード中の表示
+            statusP.style.color = 'blue';
+            statusP.innerText = `アップロード中... (${files.length} 件)`;
+
+            try {
+                // サーバーの /upload エンドポイントに一括送信
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json(); // サーバーからのJSON応答
+
+                if (response.ok) {
+                    // 成功したら、サーバーからのメッセージを表示
+                    statusP.style.color = 'green';
+                    statusP.innerText = data.message;
+                    // ファイル選択をクリア（任意）
+                    fileInput.value = ''; 
+                } else {
+                    statusP.style.color = 'red';
+                    statusP.innerText = 'アップロード失敗: ' + data.message;
+                }
+            } catch (error) {
+                console.error('エラー:', error);
+                statusP.style.color = 'red';
+                statusP.innerText = '通信エラーが発生しました。';
+            }
+        });
+    </script>
+</body>
+</html>
