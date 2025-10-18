@@ -1,34 +1,71 @@
+// ステップ4Aで入れた部品を読み込む
+require('dotenv').config(); // .env ファイルを最初に読み込む
 const express = require('express');
 const multer = require('multer');
+const multerS3 = require('multer-s3'); // ローカル保存の代わりにS3/R2を使う
+const { S3Client } = require('@aws-sdk/client-s3'); // R2接続クライアント
+const { Pool } = require('pg'); // データベース接続クライアント
 const path = require('path');
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000; // Renderが指定するPORTに対応
 
-// アップロード履歴をサーバーのメモリ上に保存する配列
-// (注：サーバーを再起動すると履歴は消えます)
-let uploadHistory = [];
-
-// --- Multer（ファイル保存）の設定 ---
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, 'uploads/'); 
-    },
-    
-    filename: (req, file, cb) => {
-        // 元のファイル名をそのまま使う
-        // 日本語ファイル名が文字化けするのを防ぐためのデコード処理
-        const decodedFilename = Buffer.from(file.originalname, 'latin1').toString('utf8');
-        
-        // ★注意: この方法では、同じファイル名の画像がアップロードされると
-        // 古いファイルが上書きされます。
-        cb(null, decodedFilename);
+// --- 1. データベース (PostgreSQL) 接続設定 ---
+// .env の DATABASE_URL を読み込んで接続
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false // Render DB への接続に必要
     }
 });
 
-const upload = multer({ 
-    storage: storage,
+// ★ データベースにテーブルを作成する関数 (初回起動時に実行)
+const createTable = async () => {
+    const queryText = `
+    CREATE TABLE IF NOT EXISTS images (
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      url VARCHAR(1024) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );`;
+    try {
+        await pool.query(queryText);
+        console.log('Database table "images" is ready.');
+    } catch (err) {
+        console.error('Failed to create database table:', err);
+    }
+};
+
+// --- 2. ストレージ (Cloudflare R2) 接続設定 ---
+// .env の R2 情報を読み込む
+const r2Endpoint = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+const r2PublicUrl = process.env.R2_PUBLIC_URL;
+
+const s3Client = new S3Client({
+    region: 'auto', // R2は 'auto'
+    endpoint: r2Endpoint,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+});
+
+// --- 3. Multer (アップロード処理) の設定 ---
+// diskStorage (ローカル保存) の代わりに multerS3 (R2保存) を使う
+const upload = multer({
+    storage: multerS3({
+        s3: s3Client,
+        bucket: process.env.R2_BUCKET_NAME,
+        acl: 'public-read', // R2側でパブリック設定済みなら念のため
+        metadata: function (req, file, cb) {
+            cb(null, { fieldName: file.fieldname });
+        },
+        key: function (req, file, cb) {
+            // ファイル名をそのまま保存 (日本語対応)
+            const decodedFilename = Buffer.from(file.originalname, 'latin1').toString('utf8');
+            cb(null, decodedFilename);
+        }
+    }),
     fileFilter: (req, file, cb) => {
         if (file.mimetype.startsWith('image/')) {
             cb(null, true);
@@ -38,89 +75,70 @@ const upload = multer({
     }
 });
 
-// --- サーバーのルーティング（URLごとの処理）設定 ---
+// --- サーバーの処理 ---
 
-// 1. ルートURL ('/') にアクセスしたら index.html を表示
+// 1. ルート ('/') で index.html を表示
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
+// ( /uploads の静的配信は不要になったので削除 )
 
-// 2. '/uploads' ディレクトリを静的ファイルとして公開
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// 3. '/upload' へのPOSTリクエスト（ファイルアップロード）の処理
-// (★「一括アップロード」に対応したバージョンです)
-app.post('/upload', upload.array('imageFiles', 100), (req, res) => {
-    // 'upload.single' から 'upload.array' に変更
-    // 'imageFiles' はHTML側と合わせる名前。100は一度にアップロードできる最大ファイル数
-
-    // ファイルが正常にアップロードされた場合
+// 2. 一括アップロード（/upload）の処理
+app.post('/upload', upload.array('imageFiles', 100), async (req, res) => {
+    
     if (req.files && req.files.length > 0) {
-        
-        const baseUrl = req.protocol + '://' + req.get('host');
-        
-        // ★受け取ったファイルの配列(req.files)をループ処理
-        req.files.forEach(file => {
-            // ★注意: ファイル名に日本語や空白が含まれる場合、URLエンコードが必要です
-            const encodedFilename = encodeURIComponent(file.filename);
-            const fileUrl = `${baseUrl}/uploads/${encodedFilename}`;
-            
-            // 履歴配列に「題名（ファイル名）」と「URL」を一件ずつ追加
-            uploadHistory.push({
-                title: file.filename, // 元のファイル名
-                url: fileUrl              // 生成されたURL
+        try {
+            // ★ uploadHistory 配列の代わりに、DBにINSERTする
+            const insertPromises = req.files.map(file => {
+                // R2の公開URL (r2PublicUrl) とファイル名を組み合わせる
+                // file.key は multerS3 で設定した日本語ファイル名
+                const fileUrl = `${r2PublicUrl}/${encodeURIComponent(file.key)}`; 
+                const title = file.key;
+                
+                return pool.query(
+                    'INSERT INTO images (title, url) VALUES ($1, $2)',
+                    [title, fileUrl]
+                );
             });
-        });
+            
+            await Promise.all(insertPromises); // 全てのDB書き込みが完了するまで待つ
 
-        // JSON形式で「成功メッセージ」と「処理件数」を返す
-        res.json({ 
-            message: `${req.files.length} 件の画像をアップロードしました。`,
-            count: req.files.length
-        });
-
+            res.json({ 
+                message: `${req.files.length} 件の画像をアップロードしました。`,
+                count: req.files.length
+            });
+        } catch (dbError) {
+            console.error('Database insert error:', dbError);
+            res.status(500).json({ message: 'データベースへの保存に失敗しました。' });
+        }
     } else {
-        // ファイルが1件もなかった場合
         res.status(400).json({ message: 'アップロードするファイルが選択されていません。' });
     }
 }, (error, req, res, next) => {
-    // Multerのエラーハンドリング
     res.status(400).json({ message: error.message });
 });
 
-// 4. CSVダウンロード処理 (変更なし)
-app.get('/download-csv', (req, res) => {
-    
-    if (uploadHistory.length === 0) {
-        res.status(404).send('アップロード履歴がまだありません。');
-        return;
-    }
+// 3. CSVダウンロード（/download-csv）の処理
+app.get('/download-csv', async (req, res) => {
+    try {
+        // ★ uploadHistory 配列の代わりに、DBからSELECTする
+        const { rows } = await pool.query('SELECT title, url FROM images ORDER BY created_at DESC');
 
-    // CSVのヘッダー行を作成（A列は空欄, B列:題名, C列:URL）
-    let csvContent = ",題名,URL\n";
+        if (rows.length === 0) {
+            res.status(404).send('アップロード履歴がまだありません。');
+            return;
+        }
 
-    // CSVのデータ行を作成
-    uploadHistory.forEach(item => {
-        // CSV内で値がカンマや改行を含んでも崩れないよう、" "で囲む（簡易エスケープ）
-        const title = `"${item.title.replace(/"/g, '""')}"`;
-        const url = `"${item.url.replace(/"/g, '""')}"`;
-        
-        // A列を空欄にするため、先頭にカンマを追加
-        csvContent += `,${title},${url}\n`;
-    });
+        let csvContent = ",題S,URL\n"; // A列は空欄
+        rows.forEach(item => {
+            const title = `"${item.title.replace(/"/g, '""')}"`;
+            const url = `"${item.url.replace(/"/g, '""')}"`;
+            csvContent += `,${title},${url}\n`;
+        });
 
-    // Excelなどで日本語CSVを開いた際の文字化けを防ぐため、BOM (Byte Order Mark) を先頭に追加
-    const bom = '\uFEFF';
-
-    // HTTPヘッダーを設定
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    // 'attachment' はブラウザにダウンロードを促す設定
-    res.setHeader('Content-Disposition', 'attachment; filename="upload_list.csv"');
-    
-    // BOMとCSVデータを送信
-    res.status(200).send(bom + csvContent);
-});
-
-// --- サーバーの起動 ---
-app.listen(port, () => {
-    console.log(`サーバーが http://localhost:${port} で起動しました`);
-});
+        const bom = '\uFEFF';
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename="upload_list.csv"');
+        res.status(200).send(bom + csvContent);
+    } catch (dbError) {
+        console.error('Database select error:', dbError);
