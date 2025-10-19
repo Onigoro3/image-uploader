@@ -7,14 +7,14 @@ const multerS3 = require('multer-s3');
 const { S3Client, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
 
-// ▼▼▼ 認証（ログイン）用の部品を読み込む ▼▼▼
+// --- 認証（ログイン）用の部品 ---
 const session = require('express-session');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const bcrypt = require('bcryptjs');
 const PgSession = require('connect-pg-simple')(session); // セッションをDBに保存
-const flash = require('connect-flash'); // ★ ログイン失敗メッセージ用
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+const flash = require('connect-flash');
+const ejs = require('ejs'); // テンプレートエンジン
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -27,32 +27,29 @@ const pool = new Pool({
     }
 });
 
-// ▼▼▼ テンプレートエンジン(EJS) を使う設定（login.html の <% %> のため）▼▼▼
-app.engine('html', require('ejs').renderFile);
+// --- テンプレートエンジン(EJS) を使う設定 ---
+app.engine('html', ejs.renderFile);
 app.set('view engine', 'html');
 app.set('views', __dirname); 
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-// ▼▼▼ サーバーが「フォーム送信」を読めるようにする設定 ▼▼▼
-app.use(express.json()); // APIリクエスト用
-app.use(express.urlencoded({ extended: false })); // ログインフォーム送信用
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+// --- フォーム送信を読めるようにする設定 ---
+app.use(express.json()); 
+app.use(express.urlencoded({ extended: false })); 
 
-// ▼▼▼ セッション管理（ログイン状態の維持）設定 ▼▼▼
+// --- セッション管理（ログイン状態の維持）設定 ---
 app.use(session({
     store: new PgSession({ 
         pool: pool,                
         tableName: 'user_sessions' 
     }),
-    secret: process.env.SESSION_SECRET || 'a_very_secret_key_that_should_be_in_env', // ★.envに追加したキー
+    secret: process.env.SESSION_SECRET || 'a_very_secret_key_that_should_be_in_env', 
     resave: false,
     saveUninitialized: false, 
     cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 } // 30日間有効
 }));
-app.use(flash()); // ★ ログイン失敗メッセージを使えるようにする
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+app.use(flash()); 
 
-// ▼▼▼ Passport（認証）の初期設定 ▼▼▼
+// --- Passport（認証）の初期設定 ---
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -77,12 +74,12 @@ passport.use(new LocalStrategy(
     }
 ));
 
-// Passport: ユーザー情報をセッションに保存するロジック
+// Passport: ユーザー情報をセッションに保存
 passport.serializeUser((user, done) => {
     done(null, user.id);
 });
 
-// Passport: セッションからユーザー情報を復元するロジック
+// Passport: セッションからユーザー情報を復元
 passport.deserializeUser(async (id, done) => {
     try {
         const { rows } = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
@@ -91,11 +88,9 @@ passport.deserializeUser(async (id, done) => {
         done(err);
     }
 });
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-// --- DBテーブル自動作成関数 (★`users` と `user_sessions` を追加) ---
+// --- DBテーブル自動作成関数 (users, sessions, images) ---
 const createTable = async () => {
-    // ユーザーテーブル (パスワードをハッシュ化して保存)
     const userQuery = `
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -103,70 +98,38 @@ const createTable = async () => {
       password_hash VARCHAR(100) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );`;
-    // セッション保存用テーブル
     const sessionQuery = `
     CREATE TABLE IF NOT EXISTS "user_sessions" (
-      "sid" varchar NOT NULL COLLATE "default",
-      "sess" json NOT NULL,
-      "expire" timestamp(6) NOT NULL
+      "sid" varchar NOT NULL COLLATE "default", "sess" json NOT NULL, "expire" timestamp(6) NOT NULL
     ) WITH (OIDS=FALSE);
-    DO $$ BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint WHERE conname = 'user_sessions_pkey'
-        ) THEN
-            ALTER TABLE "user_sessions" ADD CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;
-        END IF;
-    END $$;
+    DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_sessions_pkey') THEN
+        ALTER TABLE "user_sessions" ADD CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;
+    END IF; END $$;
     CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");
     `;
-    // 既存のimagesテーブル作成クエリ
     const createQuery = `
     CREATE TABLE IF NOT EXISTS images (
-      id SERIAL PRIMARY KEY,
-      title VARCHAR(255) NOT NULL,
-      url VARCHAR(1024) NOT NULL,
+      id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, url VARCHAR(1024) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       folder_name VARCHAR(100) DEFAULT 'default_folder',
       category_name VARCHAR(100) DEFAULT 'default_category'
     );`;
-    // 既存のテーブルに `folder_name` カラムが「無い場合だけ」追加するクエリ
-    const alterFolderQuery = `
-    DO $$
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns 
-            WHERE table_name='images' AND column_name='folder_name'
-        ) THEN
-            ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder';
-        END IF;
-    END;
-    $$;`;
-    // 既存のテーブルに `category_name` カラムが「無い場合だけ」追加するクエリ
-    const alterCategoryQuery = `
-    DO $$
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns 
-            WHERE table_name='images' AND column_name='category_name'
-        ) THEN
-            ALTER TABLE images ADD COLUMN category_name VARCHAR(100) DEFAULT 'default_category';
-        END IF;
-    END;
-    $$;`;
+    const alterFolderQuery = `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='folder_name') THEN ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder'; END IF; END; $$;`;
+    const alterCategoryQuery = `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='category_name') THEN ALTER TABLE images ADD COLUMN category_name VARCHAR(100) DEFAULT 'default_category'; END IF; END; $$;`;
     
     try {
-        await pool.query(userQuery); // ★ユーザーテーブル作成
-        await pool.query(sessionQuery); // ★セッションテーブル作成
-        await pool.query(createQuery); // imagesテーブル作成
-        await pool.query(alterFolderQuery); // folder_nameカラム追加
-        await pool.query(alterCategoryQuery); // category_nameカラム追加
+        await pool.query(userQuery);
+        await pool.query(sessionQuery);
+        await pool.query(createQuery);
+        await pool.query(alterFolderQuery);
+        await pool.query(alterCategoryQuery);
         console.log('Database tables (users, sessions, images) are ready.');
     } catch (err) {
         console.error('Failed to create/update database tables:', err);
     }
 };
 
-// --- ストレージ (R2) 接続 (変更なし) ---
+// --- ストレージ (R2) 接続 ---
 const r2Endpoint = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const r2PublicUrl = process.env.R2_PUBLIC_URL;
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME; 
@@ -178,7 +141,7 @@ const s3Client = new S3Client({
     },
 });
 
-// --- Multer (アップロード処理) (変更なし) ---
+// --- Multer (アップロード処理) ---
 const upload = multer({
     storage: multerS3({
         s3: s3Client, 
@@ -209,16 +172,16 @@ app.get('/login', (req, res) => {
 
 // 2. ログイン処理 (POST)
 app.post('/login', passport.authenticate('local', {
-    successRedirect: '/', // 成功したらメインページ '/' に飛ばす
-    failureRedirect: '/login', // 失敗したら /login に戻す
-    failureFlash: true // 失敗メッセージ(例: 'パスワードが違います') を /login に送る
+    successRedirect: '/', 
+    failureRedirect: '/login', 
+    failureFlash: true 
 }));
 
 // 3. ログアウト処理 (GET)
 app.get('/logout', (req, res, next) => {
     req.logout((err) => {
         if (err) { return next(err); }
-        res.redirect('/login'); // ログアウトしたらログインページに戻す
+        res.redirect('/login'); 
     });
 });
 
@@ -238,7 +201,7 @@ app.get('/', isAuthenticated, (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// 5. アップロードAPI (/upload) (★ isAuthenticated を追加)
+// 5. アップロードAPI (/upload) 
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
     const { categoryName, folderName } = req.body; 
     if (!categoryName || categoryName.trim() === '') { return res.status(400).json({ message: 'カテゴリ名が指定されていません。' }); }
@@ -264,7 +227,7 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
     }
 });
 
-// 6. フォルダ別CSV API (/download-csv) (★ isAuthenticated を追加)
+// 6. フォルダ別CSV API (/download-csv) 
 app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
         const { folder } = req.query; 
@@ -297,7 +260,7 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
     }
 });
 
-// 7. カテゴリリストAPI (/api/categories) (★ isAuthenticated を追加)
+// 7. カテゴリリストAPI (/api/categories)
 app.get('/api/categories', isAuthenticated, async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT DISTINCT category_name FROM images ORDER BY category_name');
@@ -308,7 +271,7 @@ app.get('/api/categories', isAuthenticated, async (req, res) => {
     }
 });
 
-// 8. フォルダリストAPI (/api/folders_by_category/:categoryName) (★ isAuthenticated を追加)
+// 8. フォルダリストAPI (/api/folders_by_category/:categoryName)
 app.get('/api/folders_by_category/:categoryName', isAuthenticated, async (req, res) => {
     try {
         const { categoryName } = req.params; 
@@ -322,7 +285,7 @@ app.get('/api/folders_by_category/:categoryName', isAuthenticated, async (req, r
     }
 });
 
-// 9. 画像リストAPI (/api/images_by_folder/:folderName) (★ isAuthenticated を追加)
+// 9. 画像リストAPI (/api/images_by_folder/:folderName)
 app.get('/api/images_by_folder/:folderName', isAuthenticated, async (req, res) => {
     try {
         const { folderName } = req.params; 
@@ -336,30 +299,20 @@ app.get('/api/images_by_folder/:folderName', isAuthenticated, async (req, res) =
     }
 });
 
-// 10. フォルダ削除API (/api/folder/:folderName) (★ isAuthenticated を追加)
+// 10. フォルダ削除API (/api/folder/:folderName)
 app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
     const { folderName } = req.params;
     try {
-        // --- ステップA: 削除対象のファイル名をDBから取得 ---
-        const { rows } = await pool.query(
-            'SELECT title FROM images WHERE folder_name = $1', [folderName]
-        );
+        const { rows } = await pool.query('SELECT title FROM images WHERE folder_name = $1', [folderName]);
         if (rows.length > 0) {
-            // --- ステップB: R2(倉庫)から画像ファイル本体を削除 ---
             const objectsToDelete = rows.map(row => ({ Key: row.title }));
             const deleteCommand = new DeleteObjectsCommand({
                 Bucket: R2_BUCKET_NAME,
                 Delete: { Objects: objectsToDelete },
             });
             await s3Client.send(deleteCommand);
-            console.log(`Successfully deleted ${objectsToDelete.length} objects from R2 for folder: ${folderName}`);
         }
-        // --- ステップC: DB(台帳)から履歴を削除 ---
-        await pool.query(
-            'DELETE FROM images WHERE folder_name = $1', [folderName]
-        );
-        console.log(`Successfully deleted database records for folder: ${folderName}`);
-        // --- ステップD: 成功をブラウザに返す ---
+        await pool.query('DELETE FROM images WHERE folder_name = $1', [folderName]);
         res.json({ message: `フォルダ「${folderName}」を完全に削除しました。` });
     } catch (error) {
         console.error(`Failed to delete folder ${folderName}:`, error);
@@ -367,7 +320,47 @@ app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
     }
 });
 
-// --- サーバーの起動 ---
+
+// ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+// 11. 【★初回セットアップ用★】 管理者ユーザーを作成する
+// このコードは、ユーザー作成後に必ず削除してください！
+
+// ★★★★★ 修正点1: `isAuthenticated,` を削除 ★★★★★
+app.get('/setup-admin-user', async (req, res) => {
+    
+    // ★★★★★ 修正点2: あなたのユーザー名とパスワードに書き換える ★★★★★
+    const username = 'onicard8580'; // (例: 'onicard')
+    const password = 'Yonicard2580Core2580image'; // (例: 'OniCard-Pass-2025!')
+
+    try {
+        // pgcrypto拡張を有効化
+        await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
+        
+        // パスワードをハッシュ化してDBに保存
+        // (bcryptjs を使って Node 側でハッシュ化)
+        const salt = await bcrypt.genSalt(10);
+        const password_hash = await bcrypt.hash(password, salt);
+
+        // ユーザーをDBに挿入
+        await pool.query(
+            'INSERT INTO users (username, password_hash) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING;',
+            [username, password_hash]
+        );
+
+        res.status(200).send(
+            `<h1>セットアップ成功</h1>` +
+            `<p>ユーザー名「${username}」でアカウントを作成（または確認）しました。</p>` +
+            `<p><b>【最重要】</b>今すぐ server.js から /setup-admin-user のコードを削除し、git push してください！</p>` +
+            `<a href="/">ログインページに戻る</a>`
+        );
+    } catch (err) {
+        console.error('管理者ユーザーの作成に失敗:', err);
+        res.status(500).send('管理者ユーザーの作成に失敗しました。');
+    }
+});
+// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+// --- サーバーの起動 (★重複を削除し、1回だけにする) ---
 app.listen(port, async () => {
     await createTable(); 
     console.log(`サーバーが http://localhost:${port} で起動しました`);
