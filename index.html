@@ -2,119 +2,86 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>画像アップローダー (カテゴリ/削除機能付き)</title>
+    <title>画像アップローダー (検索機能付き)</title>
     <style>
+        /* (以前のスタイルはほぼそのまま) */
         body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
         hr { margin: 2em 0; }
-        input[type="text"] { padding: 5px; border: 1px solid #ccc; border-radius: 4px; }
+        input[type="text"], input[type="search"] { padding: 5px; border: 1px solid #ccc; border-radius: 4px; } /* 検索入力のスタイルを追加 */
         button { padding: 5px 10px; cursor: pointer; }
-        
+
         #upload-section { background: #f9f9f9; padding: 15px; border-radius: 8px; display: flex; gap: 20px; }
         #upload-section > div { flex: 1; }
         #uploadStatus { font-weight: bold; }
-        
-        #csvDownloader {
-            display: inline-block; padding: 8px 12px;
-            background-color: #007bff; color: white;
-            text-decoration: none; border-radius: 4px;
-        }
+
+        #csvDownloader { display: inline-block; padding: 8px 12px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; }
 
         #gallery-section { display: flex; gap: 20px; }
-        #category-container, #folder-container {
-            width: 200px; border: 1px solid #eee; padding: 10px;
-            border-radius: 8px; background: #fafafa;
-        }
+        #category-container, #folder-container { width: 200px; border: 1px solid #eee; padding: 10px; border-radius: 8px; background: #fafafa; }
+
+        /* --- 検索バーのスタイル --- */
+        #search-section { margin-top: 20px; border-top: 2px solid #eee; padding-top: 20px; }
+        #searchInput { width: 300px; padding: 8px; }
+        /* --- 検索バーのスタイル ここまで --- */
+
         #image-gallery-container {
             flex: 1; display: grid;
             grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
             gap: 10px; margin-top: 10px;
-            border-top: 2px solid #eee; padding-top: 10px;
-        }
-        
-        .category {
-            padding: 8px; border: 1px solid #ccc;
-            border-radius: 5px; background-color: #f4f4f4;
-            cursor: pointer; font-weight: bold; margin-bottom: 5px;
-        }
-        .category.active {
-            background-color: #007bff; color: white; border-color: #007bff;
+            /* border-top 削除 */ padding-top: 10px;
         }
 
-        /* ★フォルダと削除ボタンを横並びにするためのコンテナ */
-        .folder-item {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 8px; border: 1px solid #ccc;
-            border-radius: 5px; background-color: #f4f4f4;
-            font-weight: bold; margin-bottom: 5px;
+        .category, .folder-item span { cursor: pointer; } /* フォルダ名をクリック可能に */
+        .category, .folder-item {
+             padding: 8px; border: 1px solid #ccc;
+             border-radius: 5px; background-color: #f4f4f4;
+             font-weight: bold; margin-bottom: 5px;
         }
-        .folder-item.active {
-            background-color: #007bff; color: white; border-color: #007bff;
-        }
-        .folder-item span { cursor: pointer; flex-grow: 1; } /* フォルダ名部分 */
-        
-        /* ★削除ボタン(X)のスタイル */
-        .delete-btn {
-            background: #dc3545; color: white;
-            border: none; border-radius: 50%;
-            width: 20px; height: 20px;
-            cursor: pointer; font-weight: bold;
-            line-height: 20px; text-align: center;
-            flex-shrink: 0; margin-left: 5px;
-        }
+        .category.active, .folder-item.active { background-color: #007bff; color: white; border-color: #007bff; }
+        .folder-item { display: flex; justify-content: space-between; align-items: center; }
+        .folder-item span { flex-grow: 1; }
+        .delete-btn { background: #dc3545; color: white; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-weight: bold; line-height: 20px; text-align: center; flex-shrink: 0; margin-left: 5px; }
         .delete-btn:hover { background: #c82333; }
-        
-        .gallery-image {
-            width: 100%; height: 130px;
-            object-fit: cover; border: 1px solid #ddd; border-radius: 4px;
-        }
+        .gallery-image { width: 100%; height: 130px; object-fit: cover; border: 1px solid #ddd; border-radius: 4px; }
     </style>
-    </head>
+</head>
 <body>
 
     <div id="upload-section">
+        {/* アップロード部分は変更なし */}
         <div>
             <h2>画像をアップロード</h2>
-            <p>
-                <label for="categoryNameInput"><b>1. 保存先カテゴリ名:</b></label><br>
-                <input type="text" id="categoryNameInput" value="default_category" placeholder="カテゴリ名 (例: デュエマ)">
-            </p>
-            <p>
-                <label for="folderNameInput"><b>2. 保存先フォルダ名:</b></label><br>
-                <input type="text" id="folderNameInput" value="default_folder" placeholder="フォルダ名 (例: 25EX2)">
-            </p>
+            <p><label for="categoryNameInput"><b>1. 保存先カテゴリ名:</b></label><br><input type="text" id="categoryNameInput" value="default_category" placeholder="カテゴリ名"></p>
+            <p><label for="folderNameInput"><b>2. 保存先フォルダ名:</b></label><br><input type="text" id="folderNameInput" value="default_folder" placeholder="フォルダ名"></p>
         </div>
         <div>
             <p><b>3. ファイルを選択</b></p>
-            <input type="file" id="imageInput" accept="image/*" multiple>
-            <button id="uploadButton">アップロード</button>
+            <input type="file" id="imageInput" accept="image/*" multiple><button id="uploadButton">アップロード</button>
             <p id="uploadStatus"></p>
         </div>
     </div>
-
     <hr>
-
     <h3>履歴のダウンロード</h3>
-    <p>現在選択中の**フォルダ**の「題名」と「URL」のリストをCSVでダウンロードします。</p>
+    <p>現在選択中の**フォルダ**のCSVをダウンロードします。</p>
     <a href="#" id="csvDownloader" style="visibility: hidden;">CSVダウンロード</a>
     <p id="csv-status-text">(フォルダを選択するとボタンが有効になります)</p>
-
     <hr>
     <h3>カテゴリ・フォルダ別 ギャラリー</h3>
-    <p>カテゴリ → フォルダの順にクリックすると、画像が表示されます。(Xボタンでフォルダごと削除)</p>
-    
-    <div id="gallery-section">
-        <div id="category-container">
-            <h4>カテゴリ</h4>
-            <p id="category-loading-status">読み込み中...</p>
-        </div>
-        <div id="folder-container">
-            <h4>フォルダ</h4>
-            <p id="folder-loading-status"></p>
-        </div>
-    </div>
-    
-    <div id="image-gallery-container"></div>
+    <p>カテゴリ → フォルダ → (検索) の順で画像を表示します。</p>
 
+    <div id="gallery-section">
+        <div id="category-container"><h4>カテゴリ</h4><p id="category-loading-status">読み込み中...</p></div>
+        <div id="folder-container"><h4>フォルダ</h4><p id="folder-loading-status"></p></div>
+    </div>
+
+    {/* ▼▼▼ 検索バーを追加 ▼▼▼ */}
+    <div id="search-section" style="display: none;"> {/* 最初は非表示 */}
+         <label for="searchInput"><b>画像ファイル名検索:</b></label>
+         <input type="search" id="searchInput" placeholder="ファイル名の一部を入力...">
+    </div>
+    {/* ▲▲▲ 検索バーを追加 ▲▲▲ */}
+
+    <div id="image-gallery-container"></div>
 
     <script>
         // --- HTML要素を取得 ---
@@ -123,7 +90,6 @@
         const folderNameInput = document.getElementById('folderNameInput');
         const uploadButton = document.getElementById('uploadButton');
         const statusP = document.getElementById('uploadStatus');
-        
         const categoryContainer = document.getElementById('category-container');
         const folderContainer = document.getElementById('folder-container');
         const galleryContainer = document.getElementById('image-gallery-container');
@@ -131,12 +97,16 @@
         const folderStatus = document.getElementById('folder-loading-status');
         const csvButton = document.getElementById('csvDownloader');
         const csvStatus = document.getElementById('csv-status-text');
+        const searchSection = document.getElementById('search-section'); // 検索セクションのdiv
+        const searchInput = document.getElementById('searchInput');   // 検索入力バー
+
+        let currentSelectedFolder = null; // 選択中のフォルダを追跡
 
         // --- アップロード機能 (変更なし) ---
         uploadButton.addEventListener('click', async () => {
             const files = fileInput.files;
             const categoryName = categoryNameInput.value.trim();
-            const folderName = folderNameInput.value.trim(); 
+            const folderName = folderNameInput.value.trim();
             if (files.length === 0) { alert('画像が選択されていません。'); return; }
             if (categoryName === '') { alert('カテゴリ名を入力してください。'); return; }
             if (folderName === '') { alert('フォルダ名を入力してください。'); return; }
@@ -152,26 +122,24 @@
                 if (response.ok) {
                     statusP.style.color = 'green'; statusP.innerText = data.message;
                     fileInput.value = '';
-                    loadCategories(); 
+                    loadCategories();
                 } else {
                     statusP.style.color = 'red'; statusP.innerText = 'アップロード失敗: ' + data.message;
                 }
             } catch (error) {
                 statusP.style.color = 'red'; statusP.innerText = '通信エラーが発生しました。';
             }
-        });
+         });
 
         // --- ギャラリー機能 ---
-        
-        // (A) ページ読み込み時: カテゴリを読み込む (変更なし)
         document.addEventListener('DOMContentLoaded', () => { loadCategories(); });
 
-        // (B) カテゴリボタンを作る (変更なし)
-        async function loadCategories() {
-            try {
+        // (B) カテゴリ読み込み (変更なし)
+        async function loadCategories() { /* ... (変更なし) ... */
+             try {
                 const response = await fetch('/api/categories');
                 const categories = await response.json();
-                categoryContainer.innerHTML = '<h4>カテゴリ</h4>'; 
+                categoryContainer.innerHTML = '<h4>カテゴリ</h4>';
                 if (categories.length === 0) {
                     categoryStatus.innerText = 'データがありません。';
                     categoryContainer.appendChild(categoryStatus); return;
@@ -181,14 +149,15 @@
                     category.className = 'category';
                     category.innerText = categoryName;
                     category.addEventListener('click', () => {
-                        loadFolders(categoryName); 
+                        loadFolders(categoryName);
                         document.querySelectorAll('.category').forEach(c => c.classList.remove('active'));
                         category.classList.add('active');
-                        categoryNameInput.value = categoryName; 
+                        categoryNameInput.value = categoryName;
                         folderContainer.innerHTML = '<h4>フォルダ</h4><p>読み込み中...</p>';
                         galleryContainer.innerHTML = '';
                         csvButton.style.visibility = 'hidden';
                         csvStatus.innerText = '(フォルダを選択するとボタンが有効になります)';
+                        searchSection.style.display = 'none'; // カテゴリ変更時は検索バーを隠す
                     });
                     categoryContainer.appendChild(category);
                 });
@@ -198,42 +167,35 @@
             }
         }
 
-        // (C) フォルダボタンを作る (★削除ボタン(X)を追加するよう改造)
-        async function loadFolders(categoryName) {
+        // (C) フォルダ読み込み (基本ロジックは変更なし、フォルダ名を取得するだけ)
+        async function loadFolders(categoryName) { /* ... (変更なし) ... */
             try {
                 const encodedCategoryName = encodeURIComponent(categoryName);
                 const response = await fetch(`/api/folders_by_category/${encodedCategoryName}`);
-                const folders = await response.json(); 
-                folderContainer.innerHTML = '<h4>フォルダ</h4>'; 
+                const folders = await response.json();
+                folderContainer.innerHTML = '<h4>フォルダ</h4>';
                 if (folders.length === 0) {
                     folderStatus.innerText = 'データがありません。';
                     folderContainer.appendChild(folderStatus); return;
                 }
-
                 folders.forEach(folderName => {
-                    // ★ フォルダ名と削除ボタンを格納するコンテナ(div) を作成
                     const folderItem = document.createElement('div');
                     folderItem.className = 'folder-item';
-
-                    // 1. フォルダ名 (span)
                     const folderNameSpan = document.createElement('span');
                     folderNameSpan.innerText = folderName;
                     folderNameSpan.addEventListener('click', () => {
-                        loadImages(folderName); 
+                        loadImages(folderName); // ★ 画像読み込みを呼び出す
                         document.querySelectorAll('.folder-item').forEach(f => f.classList.remove('active'));
                         folderItem.classList.add('active');
-                        folderNameInput.value = folderName; 
+                        folderNameInput.value = folderName;
                     });
-
-                    // 2. 削除ボタン (button)
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = 'delete-btn';
                     deleteBtn.innerText = 'X';
                     deleteBtn.addEventListener('click', (e) => {
-                        e.stopPropagation(); // ★親(フォルダ)のクリックイベントを発動させない
-                        deleteFolder(folderName); // ★(E)の削除関数を呼び出す
+                        e.stopPropagation();
+                        deleteFolder(folderName);
                     });
-
                     folderItem.appendChild(folderNameSpan);
                     folderItem.appendChild(deleteBtn);
                     folderContainer.appendChild(folderItem);
@@ -242,18 +204,52 @@
                 console.error('フォルダの読み込みエラー:', error);
                 folderContainer.innerHTML = '<p style="color: red;">フォルダの読み込みに失敗しました。</p>';
             }
+         }
+
+        // ▼▼▼ (D) 画像読み込み (検索のために大幅に変更) ▼▼▼
+        async function loadImages(folderName) {
+            currentSelectedFolder = folderName; // 選択されたフォルダを保存
+            searchInput.value = ''; // フォルダ変更時に検索バーをクリア
+            searchSection.style.display = 'block'; // 検索バーを表示
+
+            await displayImages(folderName, ''); // 最初は全画像を表示
         }
 
-        // (D) 画像ギャラリーを作る (変更なし)
-        async function loadImages(folderName) {
+        // ▼▼▼ (NEW) 検索入力イベントリスナー ▼▼▼
+        let searchTimeout;
+        searchInput.addEventListener('input', () => {
+            // デバウンス: ユーザーの入力が止まってから300ms待つ
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(async () => {
+                if (currentSelectedFolder) {
+                    const searchTerm = searchInput.value.trim();
+                    await displayImages(currentSelectedFolder, searchTerm); // 検索を実行
+                }
+            }, 300);
+        });
+
+        // ▼▼▼ (NEW) 画像を取得して表示する関数 (全読み込みと検索の両方を処理) ▼▼▼
+        async function displayImages(folderName, searchTerm) {
             try {
-                galleryContainer.innerHTML = '<p>画像を読み込み中...</p>'; 
+                galleryContainer.innerHTML = '<p>画像を読み込み中...</p>';
                 const encodedFolderName = encodeURIComponent(folderName);
-                const response = await fetch(`/api/images_by_folder/${encodedFolderName}`); 
-                const images = await response.json(); 
-                galleryContainer.innerHTML = ''; 
+                let apiUrl;
+
+                // 検索語があるかどうかで呼び出すAPIエンドポイントを決定
+                if (searchTerm) {
+                    const encodedSearchTerm = encodeURIComponent(searchTerm);
+                    apiUrl = `/api/search?folder=${encodedFolderName}&q=${encodedSearchTerm}`; // 検索API
+                } else {
+                    apiUrl = `/api/images_by_folder/${encodedFolderName}`; // 通常の画像リストAPI
+                }
+
+                const response = await fetch(apiUrl);
+                const images = await response.json();
+
+                galleryContainer.innerHTML = ''; // ローディング表示をクリア
+
                 if (images.length === 0) {
-                    galleryContainer.innerHTML = '<p>このフォルダに画像はありません。</p>';
+                    galleryContainer.innerHTML = searchTerm ? '<p>検索結果がありません。</p>' : '<p>このフォルダに画像はありません。</p>';
                 } else {
                     images.forEach(image => {
                         const img = document.createElement('img');
@@ -262,60 +258,49 @@
                         galleryContainer.appendChild(img);
                     });
                 }
+
+                // CSVボタンのリンクを更新
                 csvButton.href = `/download-csv?folder=${encodedFolderName}`;
                 csvButton.style.visibility = 'visible';
                 csvStatus.innerText = `「${folderName}」フォルダのCSVをダウンロードします。`;
+
             } catch (error) {
-                console.error('画像ギャラリーの読み込みエラー:', error);
+                console.error('画像ギャラリーの読み込み/検索エラー:', error);
                 galleryContainer.innerHTML = '<p style="color: red;">画像の読み込みに失敗しました。</p>';
             }
         }
+         // ▲▲▲ 新しい画像表示関数 ここまで ▲▲▲
 
-        // ★ (E) 【新機能】 フォルダ削除を実行する関数
-        async function deleteFolder(folderName) {
-            // ★ 危険な操作なので、必ず確認ダイアログを出す
+        // (E) フォルダ削除関数 (変更なし)
+        async function deleteFolder(folderName) { /* ... (変更なし) ... */
             const confirmation = confirm(
                 `「${folderName}」フォルダを削除しますか？\n\n` +
                 `このフォルダ内のすべての画像がR2(倉庫)とデータベース(台帳)から完全に削除され、元に戻せなくなります。`
             );
-
-            if (!confirmation) {
-                return; // ユーザーが「キャンセル」を押したら何もしない
-            }
-
+            if (!confirmation) { return; }
             try {
                 statusP.style.color = 'blue';
                 statusP.innerText = `「${folderName}」を削除中です...`;
-                
                 const encodedFolderName = encodeURIComponent(folderName);
-                const response = await fetch(`/api/folder/${encodedFolderName}`, {
-                    method: 'DELETE' // ★DELETEメソッドでサーバーに通信
-                });
-                
+                const response = await fetch(`/api/folder/${encodedFolderName}`, { method: 'DELETE' });
                 const data = await response.json();
-
                 if (response.ok) {
-                    statusP.style.color = 'green';
-                    statusP.innerText = data.message;
-                    
-                    // ★ギャラリーの表示をリフレッシュ
-                    loadCategories(); // カテゴリから再読み込み
+                    statusP.style.color = 'green'; statusP.innerText = data.message;
+                    loadCategories();
                     folderContainer.innerHTML = '<h4>フォルダ</h4>';
                     galleryContainer.innerHTML = '';
                     csvButton.style.visibility = 'hidden';
                     csvStatus.innerText = '(フォルダを選択するとボタンが有効になります)';
+                    searchSection.style.display = 'none'; // フォルダ削除後は検索バーを隠す
                 } else {
-                    statusP.style.color = 'red';
-                    statusP.innerText = '削除失敗: ' + data.message;
+                    statusP.style.color = 'red'; statusP.innerText = '削除失敗: ' + data.message;
                 }
-
             } catch (error) {
                 console.error('削除リクエストエラー:', error);
-                statusP.style.color = 'red';
-                statusP.innerText = '通信エラーが発生しました。';
+                statusP.style.color = 'red'; statusP.innerText = '通信エラーが発生しました。';
             }
-        }
-
+         }
     </script>
-    </body>
+
+</body>
 </html>

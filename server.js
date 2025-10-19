@@ -30,24 +30,24 @@ const pool = new Pool({
 // --- テンプレートエンジン(EJS) を使う設定 ---
 app.engine('html', ejs.renderFile);
 app.set('view engine', 'html');
-app.set('views', __dirname); 
+app.set('views', __dirname);
 
 // --- フォーム送信を読めるようにする設定 ---
-app.use(express.json()); 
-app.use(express.urlencoded({ extended: false })); 
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 // --- セッション管理（ログイン状態の維持）設定 ---
 app.use(session({
-    store: new PgSession({ 
-        pool: pool,                
-        tableName: 'user_sessions' 
+    store: new PgSession({
+        pool: pool,
+        tableName: 'user_sessions'
     }),
-    secret: process.env.SESSION_SECRET || 'a_very_secret_key_that_should_be_in_env', 
+    secret: process.env.SESSION_SECRET || 'a_very_secret_key_that_should_be_in_env',
     resave: false,
-    saveUninitialized: false, 
-    cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 } 
+    saveUninitialized: false,
+    cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 } // 30日間有効
 }));
-app.use(flash()); 
+app.use(flash());
 
 // --- Passport（認証）の初期設定 ---
 app.use(passport.initialize());
@@ -64,7 +64,7 @@ passport.use(new LocalStrategy(
             const user = rows[0];
             const isMatch = await bcrypt.compare(password, user.password_hash);
             if (isMatch) {
-                return done(null, user); 
+                return done(null, user);
             } else {
                 return done(null, false, { message: 'パスワードが間違っています。' });
             }
@@ -116,7 +116,7 @@ const createTable = async () => {
     );`;
     const alterFolderQuery = `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='folder_name') THEN ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder'; END IF; END; $$;`;
     const alterCategoryQuery = `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='category_name') THEN ALTER TABLE images ADD COLUMN category_name VARCHAR(100) DEFAULT 'default_category'; END IF; END; $$;`;
-    
+
     try {
         await pool.query(userQuery);
         await pool.query(sessionQuery);
@@ -132,7 +132,7 @@ const createTable = async () => {
 // --- ストレージ (R2) 接続 ---
 const r2Endpoint = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const r2PublicUrl = process.env.R2_PUBLIC_URL;
-const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME; 
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
 const s3Client = new S3Client({
     region: 'auto', endpoint: r2Endpoint,
     credentials: {
@@ -144,8 +144,8 @@ const s3Client = new S3Client({
 // --- Multer (アップロード処理) ---
 const upload = multer({
     storage: multerS3({
-        s3: s3Client, 
-        bucket: R2_BUCKET_NAME, 
+        s3: s3Client,
+        bucket: R2_BUCKET_NAME,
         acl: 'public-read',
         key: function (req, file, cb) {
             const decodedFilename = Buffer.from(file.originalname, 'latin1').toString('utf8');
@@ -153,7 +153,7 @@ const upload = multer({
         }
     }),
     fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('image/')) { cb(null, true); } 
+        if (file.mimetype.startsWith('image/')) { cb(null, true); }
         else { cb(new Error('画像ファイルのみアップロード可能です。'), false); }
     }
 });
@@ -170,15 +170,15 @@ app.get('/login', (req, res) => {
 });
 
 app.post('/login', passport.authenticate('local', {
-    successRedirect: '/', 
-    failureRedirect: '/login', 
-    failureFlash: true 
+    successRedirect: '/',
+    failureRedirect: '/login',
+    failureFlash: true
 }));
 
 app.get('/logout', (req, res, next) => {
     req.logout((err) => {
         if (err) { return next(err); }
-        res.redirect('/login'); 
+        res.redirect('/login');
     });
 });
 
@@ -186,8 +186,8 @@ app.get('/logout', (req, res, next) => {
 // --- ★★★ ここから下は、すべて「ログイン必須」のルート ★★★ ---
 
 function isAuthenticated(req, res, next) {
-    if (req.isAuthenticated()) { 
-        return next(); 
+    if (req.isAuthenticated()) {
+        return next();
     }
     res.redirect('/login');
 }
@@ -197,7 +197,7 @@ app.get('/', isAuthenticated, (req, res) => {
 });
 
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
-    const { categoryName, folderName } = req.body; 
+    const { categoryName, folderName } = req.body;
     if (!categoryName || categoryName.trim() === '') { return res.status(400).json({ message: 'カテゴリ名が指定されていません。' }); }
     if (!folderName || folderName.trim() === '') { return res.status(400).json({ message: 'フォルダ名が指定されていません。' }); }
     if (req.files && req.files.length > 0) {
@@ -223,7 +223,7 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
 
 app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
-        const { folder } = req.query; 
+        const { folder } = req.query;
         let queryText; let queryParams;
         if (folder) {
             queryText = 'SELECT title, url, folder_name, category_name FROM images WHERE folder_name = $1 ORDER BY created_at DESC';
@@ -256,7 +256,7 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
 app.get('/api/categories', isAuthenticated, async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT DISTINCT category_name FROM images ORDER BY category_name');
-        res.json(rows.map(row => row.category_name)); 
+        res.json(rows.map(row => row.category_name));
     } catch (dbError) {
         console.error('API /api/categories error:', dbError);
         res.status(500).json({ message: 'カテゴリの読み込みに失敗しました。' });
@@ -265,7 +265,7 @@ app.get('/api/categories', isAuthenticated, async (req, res) => {
 
 app.get('/api/folders_by_category/:categoryName', isAuthenticated, async (req, res) => {
     try {
-        const { categoryName } = req.params; 
+        const { categoryName } = req.params;
         const { rows } = await pool.query(
             'SELECT DISTINCT folder_name FROM images WHERE category_name = $1 ORDER BY folder_name', [categoryName]
         );
@@ -278,11 +278,11 @@ app.get('/api/folders_by_category/:categoryName', isAuthenticated, async (req, r
 
 app.get('/api/images_by_folder/:folderName', isAuthenticated, async (req, res) => {
     try {
-        const { folderName } = req.params; 
+        const { folderName } = req.params;
         const { rows } = await pool.query(
             'SELECT title, url FROM images WHERE folder_name = $1 ORDER BY created_at DESC', [folderName]
-        ); 
-        res.json(rows); 
+        );
+        res.json(rows);
     } catch (dbError) {
         console.error('API /api/images_by_folder error:', dbError);
         res.status(500).json({ message: '画像の読み込みに失敗しました。' });
@@ -309,15 +309,50 @@ app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
     }
 });
 
-
 // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-// 
-// 11. 【★セットアップ用コード★】 は削除済みです。
-// 
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+// 11. 【新機能】 検索API (/api/search)
+app.get('/api/search', isAuthenticated, async (req, res) => {
+    const { folder, q } = req.query; // フォルダ名と検索語を取得
+
+    if (!folder) {
+        return res.status(400).json({ message: 'フォルダが指定されていません。' });
+    }
+
+    try {
+        let queryText;
+        let queryParams;
+
+        if (q && q.trim() !== '') {
+             // 検索語がある場合：ILIKEで部分一致検索
+             const searchTerm = `%${q}%`;
+             queryText = `
+                SELECT title, url
+                FROM images
+                WHERE folder_name = $1 AND title ILIKE $2
+                ORDER BY created_at DESC
+             `;
+             queryParams = [folder, searchTerm];
+        } else {
+             // 検索語がない場合：フォルダ内の全画像を取得
+             queryText = `
+                SELECT title, url FROM images
+                WHERE folder_name = $1
+                ORDER BY created_at DESC`;
+             queryParams = [folder];
+        }
+
+        const { rows } = await pool.query(queryText, queryParams);
+        res.json(rows); // 結果を返す
+
+    } catch (dbError) {
+        console.error('API /api/search error:', dbError);
+        res.status(500).json({ message: '検索処理に失敗しました。' });
+    }
+});
+// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 // --- サーバーの起動 ---
 app.listen(port, async () => {
-    await createTable(); 
+    await createTable();
     console.log(`サーバーが http://localhost:${port} で起動しました`);
 });
