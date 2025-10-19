@@ -32,9 +32,9 @@ app.engine('html', ejs.renderFile);
 app.set('view engine', 'html');
 app.set('views', __dirname);
 
-// --- フォーム送信を読めるようにする設定 ---
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+// --- フォーム送信とJSONを読めるようにする設定 ---
+app.use(express.json()); // JSONボディパーサー (PUTリクエストで使う)
+app.use(express.urlencoded({ extended: false })); // URLエンコードされたボディパーサー
 
 // --- セッション管理（ログイン状態の維持）設定 ---
 app.use(session({
@@ -309,44 +309,65 @@ app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
     }
 });
 
-// ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-// 11. 【新機能】 検索API (/api/search)
 app.get('/api/search', isAuthenticated, async (req, res) => {
-    const { folder, q } = req.query; // フォルダ名と検索語を取得
-
+    const { folder, q } = req.query;
     if (!folder) {
         return res.status(400).json({ message: 'フォルダが指定されていません。' });
     }
-
     try {
         let queryText;
         let queryParams;
-
         if (q && q.trim() !== '') {
-             // 検索語がある場合：ILIKEで部分一致検索
              const searchTerm = `%${q}%`;
              queryText = `
-                SELECT title, url
-                FROM images
+                SELECT title, url FROM images
                 WHERE folder_name = $1 AND title ILIKE $2
-                ORDER BY created_at DESC
-             `;
+                ORDER BY created_at DESC`;
              queryParams = [folder, searchTerm];
         } else {
-             // 検索語がない場合：フォルダ内の全画像を取得
              queryText = `
                 SELECT title, url FROM images
                 WHERE folder_name = $1
                 ORDER BY created_at DESC`;
              queryParams = [folder];
         }
-
         const { rows } = await pool.query(queryText, queryParams);
-        res.json(rows); // 結果を返す
-
+        res.json(rows);
     } catch (dbError) {
         console.error('API /api/search error:', dbError);
         res.status(500).json({ message: '検索処理に失敗しました。' });
+    }
+});
+
+// ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+// 12. 【新機能】 フォルダ名変更API (/api/folder/:oldFolderName)
+app.put('/api/folder/:oldFolderName', isAuthenticated, async (req, res) => {
+    const { oldFolderName } = req.params;
+    const { newFolderName } = req.body;
+
+    if (!newFolderName || newFolderName.trim() === '') {
+        return res.status(400).json({ message: '新しいフォルダ名が指定されていません。' });
+    }
+    if (newFolderName === oldFolderName) {
+         return res.status(400).json({ message: '新しい名前が現在の名前と同じです。' });
+    }
+
+    try {
+        const updateQuery = `
+            UPDATE images
+            SET folder_name = $1
+            WHERE folder_name = $2
+        `;
+        const result = await pool.query(updateQuery, [newFolderName.trim(), oldFolderName]);
+        console.log(`Renamed folder from "${oldFolderName}" to "${newFolderName}". Affected rows: ${result.rowCount}`);
+        res.json({ message: `フォルダ名を「${oldFolderName}」から「${newFolderName}」に変更しました。` });
+    } catch (error) {
+        if (error.code === '23505') {
+             console.error(`Rename failed: Folder "${newFolderName}" might already exist or other constraint violation.`);
+             return res.status(409).json({ message: `フォルダ名「${newFolderName}」は既に使用されている可能性があります。` });
+        }
+        console.error(`Failed to rename folder from ${oldFolderName} to ${newFolderName}:`, error);
+        res.status(500).json({ message: 'フォルダ名の変更に失敗しました。サーバーエラーが発生しました。' });
     }
 });
 // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
