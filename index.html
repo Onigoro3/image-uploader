@@ -2,26 +2,23 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>画像アップローダー (カテゴリ機能付き)</title>
+    <title>画像アップローダー (カテゴリ/削除機能付き)</title>
     <style>
         body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
         hr { margin: 2em 0; }
         input[type="text"] { padding: 5px; border: 1px solid #ccc; border-radius: 4px; }
         button { padding: 5px 10px; cursor: pointer; }
         
-        /* アップロード欄 */
         #upload-section { background: #f9f9f9; padding: 15px; border-radius: 8px; display: flex; gap: 20px; }
         #upload-section > div { flex: 1; }
         #uploadStatus { font-weight: bold; }
         
-        /* CSVダウンロードボタン */
         #csvDownloader {
             display: inline-block; padding: 8px 12px;
             background-color: #007bff; color: white;
             text-decoration: none; border-radius: 4px;
         }
 
-        /* ギャラリーコンテナ */
         #gallery-section { display: flex; gap: 20px; }
         #category-container, #folder-container {
             width: 200px; border: 1px solid #eee; padding: 10px;
@@ -34,15 +31,37 @@
             border-top: 2px solid #eee; padding-top: 10px;
         }
         
-        /* ギャラリー内の各要素 */
-        .category, .folder {
+        .category {
             padding: 8px; border: 1px solid #ccc;
             border-radius: 5px; background-color: #f4f4f4;
             cursor: pointer; font-weight: bold; margin-bottom: 5px;
         }
-        .category.active, .folder.active {
+        .category.active {
             background-color: #007bff; color: white; border-color: #007bff;
         }
+
+        /* ★フォルダと削除ボタンを横並びにするためのコンテナ */
+        .folder-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px; border: 1px solid #ccc;
+            border-radius: 5px; background-color: #f4f4f4;
+            font-weight: bold; margin-bottom: 5px;
+        }
+        .folder-item.active {
+            background-color: #007bff; color: white; border-color: #007bff;
+        }
+        .folder-item span { cursor: pointer; flex-grow: 1; } /* フォルダ名部分 */
+        
+        /* ★削除ボタン(X)のスタイル */
+        .delete-btn {
+            background: #dc3545; color: white;
+            border: none; border-radius: 50%;
+            width: 20px; height: 20px;
+            cursor: pointer; font-weight: bold;
+            line-height: 20px; text-align: center;
+            flex-shrink: 0; margin-left: 5px;
+        }
+        .delete-btn:hover { background: #c82333; }
         
         .gallery-image {
             width: 100%; height: 130px;
@@ -71,6 +90,7 @@
             <p id="uploadStatus"></p>
         </div>
     </div>
+
     <hr>
 
     <h3>履歴のダウンロード</h3>
@@ -80,7 +100,7 @@
 
     <hr>
     <h3>カテゴリ・フォルダ別 ギャラリー</h3>
-    <p>カテゴリ → フォルダの順にクリックすると、画像が表示されます。</p>
+    <p>カテゴリ → フォルダの順にクリックすると、画像が表示されます。(Xボタンでフォルダごと削除)</p>
     
     <div id="gallery-section">
         <div id="category-container">
@@ -94,6 +114,8 @@
     </div>
     
     <div id="image-gallery-container"></div>
+
+
     <script>
         // --- HTML要素を取得 ---
         const fileInput = document.getElementById('imageInput');
@@ -110,35 +132,27 @@
         const csvButton = document.getElementById('csvDownloader');
         const csvStatus = document.getElementById('csv-status-text');
 
-        // --- アップロード機能 (カテゴリ・フォルダも一緒に送る) ---
+        // --- アップロード機能 (変更なし) ---
         uploadButton.addEventListener('click', async () => {
             const files = fileInput.files;
             const categoryName = categoryNameInput.value.trim();
             const folderName = folderNameInput.value.trim(); 
-
             if (files.length === 0) { alert('画像が選択されていません。'); return; }
             if (categoryName === '') { alert('カテゴリ名を入力してください。'); return; }
             if (folderName === '') { alert('フォルダ名を入力してください。'); return; }
-
             const formData = new FormData();
-            formData.append('categoryName', categoryName); // ★カテゴリ名を追加
-            formData.append('folderName', folderName);     // ★フォルダ名を追加
-            for (let i = 0; i < files.length; i++) {
-                formData.append('imageFiles', files[i]);
-            }
-
+            formData.append('categoryName', categoryName);
+            formData.append('folderName', folderName);
+            for (let i = 0; i < files.length; i++) { formData.append('imageFiles', files[i]); }
             statusP.style.color = 'blue';
             statusP.innerText = `「${categoryName} / ${folderName}」にアップロード中...`;
-            
             try {
                 const response = await fetch('/upload', { method: 'POST', body: formData });
                 const data = await response.json();
-                
                 if (response.ok) {
-                    statusP.style.color = 'green';
-                    statusP.innerText = data.message;
+                    statusP.style.color = 'green'; statusP.innerText = data.message;
                     fileInput.value = '';
-                    loadCategories(); // ★アップロード成功したらカテゴリリストを再読み込み
+                    loadCategories(); 
                 } else {
                     statusP.style.color = 'red'; statusP.innerText = 'アップロード失敗: ' + data.message;
                 }
@@ -147,40 +161,30 @@
             }
         });
 
-        // --- ギャラリー機能 (3階層) ---
+        // --- ギャラリー機能 ---
         
-        // (A) ページ読み込み時: まずカテゴリを読み込む
-        document.addEventListener('DOMContentLoaded', () => {
-            loadCategories();
-        });
+        // (A) ページ読み込み時: カテゴリを読み込む (変更なし)
+        document.addEventListener('DOMContentLoaded', () => { loadCategories(); });
 
-        // (B) サーバーの「/api/categories」に通信して、カテゴリボタンを作る
+        // (B) カテゴリボタンを作る (変更なし)
         async function loadCategories() {
             try {
                 const response = await fetch('/api/categories');
-                const categories = await response.json(); // ['default_category', 'デュエマ', ...]
-                
-                categoryContainer.innerHTML = '<h4>カテゴリ</h4>'; // 見出しを再設定
-                
+                const categories = await response.json();
+                categoryContainer.innerHTML = '<h4>カテゴリ</h4>'; 
                 if (categories.length === 0) {
                     categoryStatus.innerText = 'データがありません。';
                     categoryContainer.appendChild(categoryStatus); return;
                 }
-
                 categories.forEach(categoryName => {
                     const category = document.createElement('div');
                     category.className = 'category';
                     category.innerText = categoryName;
-                    
                     category.addEventListener('click', () => {
-                        loadFolders(categoryName); // ★(C)の関数を呼び出す
+                        loadFolders(categoryName); 
                         document.querySelectorAll('.category').forEach(c => c.classList.remove('active'));
                         category.classList.add('active');
-                        
-                        // ★入力欄に自動セット
                         categoryNameInput.value = categoryName; 
-                        
-                        // フォルダリストと画像リストをリセット
                         folderContainer.innerHTML = '<h4>フォルダ</h4><p>読み込み中...</p>';
                         galleryContainer.innerHTML = '';
                         csvButton.style.visibility = 'hidden';
@@ -188,41 +192,51 @@
                     });
                     categoryContainer.appendChild(category);
                 });
-
             } catch (error) {
                 console.error('カテゴリの読み込みエラー:', error);
                 categoryContainer.innerHTML = '<p style="color: red;">カテゴリの読み込みに失敗しました。</p>';
             }
         }
 
-        // (C) 「/api/folders_by_category/:cat」に通信して、フォルダボタンを作る
+        // (C) フォルダボタンを作る (★削除ボタン(X)を追加するよう改造)
         async function loadFolders(categoryName) {
             try {
                 const encodedCategoryName = encodeURIComponent(categoryName);
                 const response = await fetch(`/api/folders_by_category/${encodedCategoryName}`);
-                const folders = await response.json(); // ['default_folder', '25EX2', ...]
-                
-                folderContainer.innerHTML = '<h4>フォルダ</h4>'; // 見出しを再設定
-                
+                const folders = await response.json(); 
+                folderContainer.innerHTML = '<h4>フォルダ</h4>'; 
                 if (folders.length === 0) {
                     folderStatus.innerText = 'データがありません。';
                     folderContainer.appendChild(folderStatus); return;
                 }
 
                 folders.forEach(folderName => {
-                    const folder = document.createElement('div');
-                    folder.className = 'folder';
-                    folder.innerText = folderName;
-                    
-                    folder.addEventListener('click', () => {
-                        loadImages(folderName); // ★(D)の関数を呼び出す
-                        document.querySelectorAll('.folder').forEach(f => f.classList.remove('active'));
-                        folder.classList.add('active');
-                        
-                        // ★入力欄に自動セット
+                    // ★ フォルダ名と削除ボタンを格納するコンテナ(div) を作成
+                    const folderItem = document.createElement('div');
+                    folderItem.className = 'folder-item';
+
+                    // 1. フォルダ名 (span)
+                    const folderNameSpan = document.createElement('span');
+                    folderNameSpan.innerText = folderName;
+                    folderNameSpan.addEventListener('click', () => {
+                        loadImages(folderName); 
+                        document.querySelectorAll('.folder-item').forEach(f => f.classList.remove('active'));
+                        folderItem.classList.add('active');
                         folderNameInput.value = folderName; 
                     });
-                    folderContainer.appendChild(folder);
+
+                    // 2. 削除ボタン (button)
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'delete-btn';
+                    deleteBtn.innerText = 'X';
+                    deleteBtn.addEventListener('click', (e) => {
+                        e.stopPropagation(); // ★親(フォルダ)のクリックイベントを発動させない
+                        deleteFolder(folderName); // ★(E)の削除関数を呼び出す
+                    });
+
+                    folderItem.appendChild(folderNameSpan);
+                    folderItem.appendChild(deleteBtn);
+                    folderContainer.appendChild(folderItem);
                 });
             } catch (error) {
                 console.error('フォルダの読み込みエラー:', error);
@@ -230,17 +244,14 @@
             }
         }
 
-        // (D) 「/api/images_by_folder/:folder」に通信して、画像ギャラリーを作る
+        // (D) 画像ギャラリーを作る (変更なし)
         async function loadImages(folderName) {
             try {
                 galleryContainer.innerHTML = '<p>画像を読み込み中...</p>'; 
-                
                 const encodedFolderName = encodeURIComponent(folderName);
                 const response = await fetch(`/api/images_by_folder/${encodedFolderName}`); 
                 const images = await response.json(); 
-
                 galleryContainer.innerHTML = ''; 
-                
                 if (images.length === 0) {
                     galleryContainer.innerHTML = '<p>このフォルダに画像はありません。</p>';
                 } else {
@@ -251,17 +262,60 @@
                         galleryContainer.appendChild(img);
                     });
                 }
-                
-                // ★【フォルダ別CSV機能】CSVダウンロードボタンを有効化
                 csvButton.href = `/download-csv?folder=${encodedFolderName}`;
                 csvButton.style.visibility = 'visible';
                 csvStatus.innerText = `「${folderName}」フォルダのCSVをダウンロードします。`;
-
             } catch (error) {
                 console.error('画像ギャラリーの読み込みエラー:', error);
                 galleryContainer.innerHTML = '<p style="color: red;">画像の読み込みに失敗しました。</p>';
             }
         }
+
+        // ★ (E) 【新機能】 フォルダ削除を実行する関数
+        async function deleteFolder(folderName) {
+            // ★ 危険な操作なので、必ず確認ダイアログを出す
+            const confirmation = confirm(
+                `「${folderName}」フォルダを削除しますか？\n\n` +
+                `このフォルダ内のすべての画像がR2(倉庫)とデータベース(台帳)から完全に削除され、元に戻せなくなります。`
+            );
+
+            if (!confirmation) {
+                return; // ユーザーが「キャンセル」を押したら何もしない
+            }
+
+            try {
+                statusP.style.color = 'blue';
+                statusP.innerText = `「${folderName}」を削除中です...`;
+                
+                const encodedFolderName = encodeURIComponent(folderName);
+                const response = await fetch(`/api/folder/${encodedFolderName}`, {
+                    method: 'DELETE' // ★DELETEメソッドでサーバーに通信
+                });
+                
+                const data = await response.json();
+
+                if (response.ok) {
+                    statusP.style.color = 'green';
+                    statusP.innerText = data.message;
+                    
+                    // ★ギャラリーの表示をリフレッシュ
+                    loadCategories(); // カテゴリから再読み込み
+                    folderContainer.innerHTML = '<h4>フォルダ</h4>';
+                    galleryContainer.innerHTML = '';
+                    csvButton.style.visibility = 'hidden';
+                    csvStatus.innerText = '(フォルダを選択するとボタンが有効になります)';
+                } else {
+                    statusP.style.color = 'red';
+                    statusP.innerText = '削除失敗: ' + data.message;
+                }
+
+            } catch (error) {
+                console.error('削除リクエストエラー:', error);
+                statusP.style.color = 'red';
+                statusP.innerText = '通信エラーが発生しました。';
+            }
+        }
+
     </script>
     </body>
 </html>
