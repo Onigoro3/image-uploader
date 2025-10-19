@@ -311,43 +311,9 @@ app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
 
 
 // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-// 11. 【★パスワード再設定用★】 管理者ユーザーを作成・または更新する
-// このコードは、ユーザー作成後に必ず削除してください！
-app.get('/setup-admin-user', async (req, res) => { // ★ isAuthenticated を削除
-    
-    // ★★★ あなたのユーザー名と「新しいパスワード」に書き換えてください ★★★
-    const username = 'onicard8580'; // (あなたのユーザー名)
-    const new_password = '2580core'; // (★新しいパスワード！)
-
-    try {
-        // pgcrypto拡張を有効化
-        await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
-        
-        // パスワードをハッシュ化
-        const salt = await bcrypt.genSalt(10);
-        const password_hash = await bcrypt.hash(new_password, salt);
-
-        // ★★★ 改造点: ユーザーが存在したら「パスワードを更新(UPDATE)」するSQL ★★★
-        const resetQuery = `
-            INSERT INTO users (username, password_hash) 
-            VALUES ($1, $2) 
-            ON CONFLICT (username) 
-            DO UPDATE SET password_hash = $2;
-        `;
-        
-        await pool.query(resetQuery, [username, password_hash]);
-
-        res.status(200).send(
-            `<h1>パスワードリセット成功</h1>` +
-            `<p>ユーザー名「${username}」のパスワードを上書き（または新規作成）しました。</p>` +
-            `<p><b>【最重要】</b>今すぐ server.js から /setup-admin-user のコードを削除し、git push してください！</p>` +
-            `<a href="/">ログインページに戻る</a>`
-        );
-    } catch (err) {
-        console.error('管理者ユーザーの作成/更新に失敗:', err);
-        res.status(500).send('管理者ユーザーの作成/更新に失敗しました。');
-    }
-});
+// 
+// 11. 【★セットアップ用コード★】 は削除済みです。
+// 
 // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 // --- サーバーの起動 ---
