@@ -19,37 +19,50 @@ const pool = new Pool({
 });
 
 // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-// ★ DBテーブル作成関数 (★自動でDBを改造する機能付き！)
+// ★ DBテーブル作成関数 (★自動でDBを「カテゴリ対応」に改造する機能付き！)
 const createTable = async () => {
-    // 既存のテーブル作成クエリ
+    // 既存のテーブル作成クエリ (最初から category_name を含む)
     const createQuery = `
     CREATE TABLE IF NOT EXISTS images (
       id SERIAL PRIMARY KEY,
       title VARCHAR(255) NOT NULL,
       url VARCHAR(1024) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      folder_name VARCHAR(100) DEFAULT 'default'
+      folder_name VARCHAR(100) DEFAULT 'default_folder',
+      category_name VARCHAR(100) DEFAULT 'default_category'
     );`;
 
     // 既存のテーブルに `folder_name` カラムが「無い場合だけ」追加するクエリ
-    const alterQuery = `
+    const alterFolderQuery = `
     DO $$
     BEGIN
-        -- imagesテーブルにfolder_nameカラムが存在しないかチェック
         IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns 
             WHERE table_name='images' AND column_name='folder_name'
         ) THEN
-            -- 存在しない場合のみ、カラムを追加する
-            ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default';
+            ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder';
+        END IF;
+    END;
+    $$;`;
+
+    // 既存のテーブルに `category_name` カラムが「無い場合だけ」追加するクエリ
+    const alterCategoryQuery = `
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name='images' AND column_name='category_name'
+        ) THEN
+            ALTER TABLE images ADD COLUMN category_name VARCHAR(100) DEFAULT 'default_category';
         END IF;
     END;
     $$;`;
     
     try {
-        await pool.query(createQuery); // テーブルがなければ作成
-        await pool.query(alterQuery);  // ★★★ここで自動でカラムがなければ追加します★★★
-        console.log('Database table "images" is ready with "folder_name" column.');
+        await pool.query(createQuery);        // テーブルがなければ作成
+        await pool.query(alterFolderQuery);   // ★★★自動で folder_name カラムを追加★★★
+        await pool.query(alterCategoryQuery); // ★★★自動で category_name カラムを追加★★★
+        console.log('Database table "images" is ready with "category_name" and "folder_name" columns.');
     } catch (err) {
         console.error('Failed to update database table:', err);
     }
@@ -59,10 +72,8 @@ const createTable = async () => {
 // --- 2. ストレージ (Cloudflare R2) 接続 ---
 const r2Endpoint = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const r2PublicUrl = process.env.R2_PUBLIC_URL;
-
 const s3Client = new S3Client({
-    region: 'auto',
-    endpoint: r2Endpoint,
+    region: 'auto', endpoint: r2Endpoint,
     credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY_ID,
         secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
@@ -72,20 +83,15 @@ const s3Client = new S3Client({
 // --- 3. Multer (アップロード処理) 設定 ---
 const upload = multer({
     storage: multerS3({
-        s3: s3Client,
-        bucket: process.env.R2_BUCKET_NAME,
-        acl: 'public-read',
+        s3: s3Client, bucket: process.env.R2_BUCKET_NAME, acl: 'public-read',
         key: function (req, file, cb) {
             const decodedFilename = Buffer.from(file.originalname, 'latin1').toString('utf8');
             cb(null, decodedFilename);
         }
     }),
     fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('image/')) {
-            cb(null, true);
-        } else {
-            cb(new Error('画像ファイルのみアップロード可能です。'), false);
-        }
+        if (file.mimetype.startsWith('image/')) { cb(null, true); } 
+        else { cb(new Error('画像ファイルのみアップロード可能です。'), false); }
     }
 });
 
@@ -97,34 +103,31 @@ app.get('/', (req, res) => {
 });
 
 // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-// 2. 一括アップロード（/upload）の処理 (「フォルダ名」を受け取るよう改造)
+// 2. 一括アップロード（/upload）の処理 (「カテゴリ・フォルダ」を受け取るよう改造)
 app.post('/upload', upload.array('imageFiles', 100), async (req, res) => {
     
-    const { folderName } = req.body; 
+    // ★HTMLから 'categoryName' と 'folderName' を受け取る
+    const { categoryName, folderName } = req.body; 
 
-    if (!folderName || folderName.trim() === '') {
-        return res.status(400).json({ message: 'フォルダ名が指定されていません。' });
-    }
+    if (!categoryName || categoryName.trim() === '') { return res.status(400).json({ message: 'カテゴリ名が指定されていません。' }); }
+    if (!folderName || folderName.trim() === '') { return res.status(400).json({ message: 'フォルダ名が指定されていません。' }); }
     
     if (req.files && req.files.length > 0) {
         try {
-            // ★DBに「フォルダ名」も一緒に保存する
+            // ★DBに「カテゴリ・フォルダ」も一緒に保存する
             const insertPromises = req.files.map(file => {
                 const fileUrl = `${r2PublicUrl}/${encodeURIComponent(file.key)}`;
                 const title = file.key;
                 return pool.query(
-                    'INSERT INTO images (title, url, folder_name) VALUES ($1, $2, $3)',
-                    [title, fileUrl, folderName] // ★$3 に folderName を追加
+                    'INSERT INTO images (title, url, folder_name, category_name) VALUES ($1, $2, $3, $4)',
+                    [title, fileUrl, folderName, categoryName] // ★$3, $4 に追加
                 );
             });
-            
             await Promise.all(insertPromises);
-            
             res.json({ 
-                message: `「${folderName}」に ${req.files.length} 件の画像をアップロードしました。`,
+                message: `「${categoryName} / ${folderName}」に ${req.files.length} 件の画像をアップロードしました。`,
                 count: req.files.length
             });
-            
         } catch (dbError) {
             console.error('Database insert error:', dbError);
             res.status(500).json({ message: 'データベースへの保存に失敗しました。' });
@@ -134,59 +137,85 @@ app.post('/upload', upload.array('imageFiles', 100), async (req, res) => {
     }
 });
 
-// 3. CSVダウンロード（/download-csv）の処理 (「フォルダ名」も出力するよう改造)
+// 3. CSVダウンロード（/download-csv）の処理 (「フォルダ別CSV」機能を追加)
 app.get('/download-csv', async (req, res) => {
     try {
-        const { rows } = await pool.query('SELECT title, url, folder_name FROM images ORDER BY folder_name, created_at DESC');
-        
-        if (rows.length === 0) {
-            res.status(404).send('アップロード履歴がまだありません。');
-            return;
+        const { folder } = req.query; // (例: /download-csv?folder=25EX2)
+
+        let queryText;
+        let queryParams;
+
+        if (folder) {
+            // ★ フォルダ指定があったら、そのフォルダだけをSELECT
+            queryText = 'SELECT title, url, folder_name, category_name FROM images WHERE folder_name = $1 ORDER BY created_at DESC';
+            queryParams = [folder];
+        } else {
+            // ★ フォルダ指定がなかったら、全件SELECT
+            queryText = 'SELECT title, url, folder_name, category_name FROM images ORDER BY category_name, folder_name, created_at DESC';
+            queryParams = [];
         }
         
-        // ★ ヘッダーを A列:フォルダ名, B列:題名, C列:URL に変更
-        let csvContent = "フォルダ名,題名,URL\n";
+        const { rows } = await pool.query(queryText, queryParams);
+        if (rows.length === 0) { res.status(404).send('対象の履歴がありません。'); return; }
         
+        // ★ ヘッダーを4列に変更
+        let csvContent = "カテゴリ名,フォルダ名,題名,URL\n";
         rows.forEach(item => {
-            const folder = `"${(item.folder_name || 'default').replace(/"/g, '""')}"`;
+            const category = `"${(item.category_name || 'default').replace(/"/g, '""')}"`;
+            const f = `"${(item.folder_name || 'default').replace(/"/g, '""')}"`;
             const title = `"${item.title.replace(/"/g, '""')}"`;
             const url = `"${item.url.replace(/"/g, '""')}"`;
-            csvContent += `${folder},${title},${url}\n`; // ★変更
+            csvContent += `${category},${f},${title},${url}\n`; // ★変更
         });
         
+        const fileName = folder ? `upload_list_${folder}.csv` : 'upload_list_all.csv';
         const bom = '\uFEFF';
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', 'attachment; filename="upload_list.csv"');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
         res.status(200).send(bom + csvContent);
+        
     } catch (dbError) {
         console.error('Database select error:', dbError);
         res.status(500).send('データベースからの読み込みに失敗しました。');
     }
 });
 
-// 4. 【新API】 フォルダリスト取得API (/api/folders)
-app.get('/api/folders', async (req, res) => {
+// 4. 【新API】 カテゴリリスト取得API (/api/categories)
+app.get('/api/categories', async (req, res) => {
     try {
+        const queryText = `SELECT DISTINCT category_name FROM images ORDER BY category_name`;
+        const { rows } = await pool.query(queryText);
+        const categories = rows.map(row => row.category_name);
+        res.json(categories); 
+    } catch (dbError) {
+        console.error('API /api/categories error:', dbError);
+        res.status(500).json({ message: 'カテゴリの読み込みに失敗しました。' });
+    }
+});
+
+// 5. 【新API】 カテゴリ内のフォルダリスト取得API (/api/folders_by_category/:categoryName)
+app.get('/api/folders_by_category/:categoryName', async (req, res) => {
+    try {
+        const { categoryName } = req.params; 
         const queryText = `
             SELECT DISTINCT folder_name 
             FROM images 
+            WHERE category_name = $1 
             ORDER BY folder_name
         `;
-        const { rows } = await pool.query(queryText);
+        const { rows } = await pool.query(queryText, [categoryName]);
         const folders = rows.map(row => row.folder_name);
-        res.json(folders); 
-        
+        res.json(folders);
     } catch (dbError) {
-        console.error('API /api/folders error:', dbError);
+        console.error('API /api/folders_by_category error:', dbError);
         res.status(500).json({ message: 'フォルダの読み込みに失敗しました。' });
     }
 });
 
-// 5. 【新API】 特定のフォルダの画像リスト取得API (/api/images/:folderName)
-app.get('/api/images/:folderName', async (req, res) => {
+// 6. 【新API】 フォルダ内の画像リスト取得API (/api/images_by_folder/:folderName)
+app.get('/api/images_by_folder/:folderName', async (req, res) => {
     try {
         const { folderName } = req.params; 
-        
         const queryText = `
             SELECT title, url 
             FROM images 
@@ -194,11 +223,9 @@ app.get('/api/images/:folderName', async (req, res) => {
             ORDER BY created_at DESC
         `;
         const { rows } = await pool.query(queryText, [folderName]); 
-        
         res.json(rows); 
-        
     } catch (dbError) {
-        console.error('API /api/images/:folderName error:', dbError);
+        console.error('API /api/images_by_folder error:', dbError);
         res.status(500).json({ message: '画像の読み込みに失敗しました。' });
     }
 });

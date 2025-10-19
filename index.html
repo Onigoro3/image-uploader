@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>画像アップローダー (フォルダ機能付き)</title>
+    <title>画像アップローダー (カテゴリ機能付き)</title>
     <style>
         body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
         hr { margin: 2em 0; }
@@ -10,7 +10,8 @@
         button { padding: 5px 10px; cursor: pointer; }
         
         /* アップロード欄 */
-        #upload-section { background: #f9f9f9; padding: 15px; border-radius: 8px; }
+        #upload-section { background: #f9f9f9; padding: 15px; border-radius: 8px; display: flex; gap: 20px; }
+        #upload-section > div { flex: 1; }
         #uploadStatus { font-weight: bold; }
         
         /* CSVダウンロードボタン */
@@ -19,33 +20,32 @@
             background-color: #007bff; color: white;
             text-decoration: none; border-radius: 4px;
         }
-        
-        /* フォルダ（ボタン風） */
-        .folder {
-            padding: 10px 15px; border: 1px solid #ccc;
-            border-radius: 5px; background-color: #f4f4f4;
-            cursor: pointer; font-weight: bold;
+
+        /* ギャラリーコンテナ */
+        #gallery-section { display: flex; gap: 20px; }
+        #category-container, #folder-container {
+            width: 200px; border: 1px solid #eee; padding: 10px;
+            border-radius: 8px; background: #fafafa;
         }
-        .folder.active { /* 選択中のフォルダ */
+        #image-gallery-container {
+            flex: 1; display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 10px; margin-top: 10px;
+            border-top: 2px solid #eee; padding-top: 10px;
+        }
+        
+        /* ギャラリー内の各要素 */
+        .category, .folder {
+            padding: 8px; border: 1px solid #ccc;
+            border-radius: 5px; background-color: #f4f4f4;
+            cursor: pointer; font-weight: bold; margin-bottom: 5px;
+        }
+        .category.active, .folder.active {
             background-color: #007bff; color: white; border-color: #007bff;
         }
-
-        /* フォルダのコンテナ */
-        #folder-container {
-            display: flex; flex-wrap: wrap; gap: 10px;
-        }
-
-        /* 画像ギャラリーのコンテナ */
-        #image-gallery-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 10px; margin-top: 20px;
-            border-top: 2px solid #eee; padding-top: 20px;
-        }
         
-        /* ギャラリー内の各画像 */
         .gallery-image {
-            width: 100%; height: 150px;
+            width: 100%; height: 130px;
             object-fit: cover; border: 1px solid #ddd; border-radius: 4px;
         }
     </style>
@@ -53,106 +53,160 @@
 <body>
 
     <div id="upload-section">
-        <h2>画像をアップロード</h2>
-        <p>
-            <label for="folderNameInput"><b>保存先フォルダ名:</b></label><br>
-            <input type="text" id="folderNameInput" value="default" placeholder="フォルダ名 (例: カードA)">
-        </p>
-        <p>
+        <div>
+            <h2>画像をアップロード</h2>
+            <p>
+                <label for="categoryNameInput"><b>1. 保存先カテゴリ名:</b></label><br>
+                <input type="text" id="categoryNameInput" value="default_category" placeholder="カテゴリ名 (例: デュエマ)">
+            </p>
+            <p>
+                <label for="folderNameInput"><b>2. 保存先フォルダ名:</b></label><br>
+                <input type="text" id="folderNameInput" value="default_folder" placeholder="フォルダ名 (例: 25EX2)">
+            </p>
+        </div>
+        <div>
+            <p><b>3. ファイルを選択</b></p>
             <input type="file" id="imageInput" accept="image/*" multiple>
             <button id="uploadButton">アップロード</button>
-        </p>
-        <p id="uploadStatus"></p>
+            <p id="uploadStatus"></p>
+        </div>
     </div>
     <hr>
 
     <h3>履歴のダウンロード</h3>
-    <p>アップロードした画像の「題名」と「URL」のリストをCSVでダウンロードします。</p>
-    <a href="/download-csv" id="csvDownloader">CSVダウンロード</a>
+    <p>現在選択中の**フォルダ**の「題名」と「URL」のリストをCSVでダウンロードします。</p>
+    <a href="#" id="csvDownloader" style="visibility: hidden;">CSVダウンロード</a>
+    <p id="csv-status-text">(フォルダを選択するとボタンが有効になります)</p>
 
     <hr>
-    <h3>フォルダ別 ギャラリー</h3>
-    <p>フォルダをクリックすると、その中に保存された画像が表示されます。</p>
+    <h3>カテゴリ・フォルダ別 ギャラリー</h3>
+    <p>カテゴリ → フォルダの順にクリックすると、画像が表示されます。</p>
     
-    <div id="folder-container">
-        <p id="gallery-loading-status">ギャラリーを読み込み中...</p>
+    <div id="gallery-section">
+        <div id="category-container">
+            <h4>カテゴリ</h4>
+            <p id="category-loading-status">読み込み中...</p>
+        </div>
+        <div id="folder-container">
+            <h4>フォルダ</h4>
+            <p id="folder-loading-status"></p>
+        </div>
     </div>
     
     <div id="image-gallery-container"></div>
     <script>
         // --- HTML要素を取得 ---
         const fileInput = document.getElementById('imageInput');
-        const folderNameInput = document.getElementById('folderNameInput'); // ★追加
+        const categoryNameInput = document.getElementById('categoryNameInput');
+        const folderNameInput = document.getElementById('folderNameInput');
         const uploadButton = document.getElementById('uploadButton');
         const statusP = document.getElementById('uploadStatus');
         
+        const categoryContainer = document.getElementById('category-container');
         const folderContainer = document.getElementById('folder-container');
         const galleryContainer = document.getElementById('image-gallery-container');
-        const galleryStatus = document.getElementById('gallery-loading-status');
+        const categoryStatus = document.getElementById('category-loading-status');
+        const folderStatus = document.getElementById('folder-loading-status');
+        const csvButton = document.getElementById('csvDownloader');
+        const csvStatus = document.getElementById('csv-status-text');
 
-        // --- アップロード機能 (フォルダ名も一緒に送るよう改造) ---
+        // --- アップロード機能 (カテゴリ・フォルダも一緒に送る) ---
         uploadButton.addEventListener('click', async () => {
             const files = fileInput.files;
-            const folderName = folderNameInput.value.trim(); // ★入力されたフォルダ名を取得
+            const categoryName = categoryNameInput.value.trim();
+            const folderName = folderNameInput.value.trim(); 
 
-            if (files.length === 0) {
-                alert('画像が選択されていません。'); return;
-            }
-            if (folderName === '') {
-                alert('フォルダ名を入力してください。'); return;
-            }
+            if (files.length === 0) { alert('画像が選択されていません。'); return; }
+            if (categoryName === '') { alert('カテゴリ名を入力してください。'); return; }
+            if (folderName === '') { alert('フォルダ名を入力してください。'); return; }
 
-            // フォームデータ（画像とフォルダ名）を準備
             const formData = new FormData();
-            formData.append('folderName', folderName); // ★フォルダ名を追加
+            formData.append('categoryName', categoryName); // ★カテゴリ名を追加
+            formData.append('folderName', folderName);     // ★フォルダ名を追加
             for (let i = 0; i < files.length; i++) {
                 formData.append('imageFiles', files[i]);
             }
 
             statusP.style.color = 'blue';
-            statusP.innerText = `「${folderName}」にアップロード中... (${files.length} 件)`;
+            statusP.innerText = `「${categoryName} / ${folderName}」にアップロード中...`;
             
             try {
-                const response = await fetch('/upload', {
-                    method: 'POST', body: formData
-                });
+                const response = await fetch('/upload', { method: 'POST', body: formData });
                 const data = await response.json();
                 
                 if (response.ok) {
                     statusP.style.color = 'green';
                     statusP.innerText = data.message;
                     fileInput.value = '';
-                    // ★アップロード成功したら、フォルダリストを再読み込み
-                    loadFolders(); 
+                    loadCategories(); // ★アップロード成功したらカテゴリリストを再読み込み
                 } else {
-                    statusP.style.color = 'red';
-                    statusP.innerText = 'アップロード失敗: ' + data.message;
+                    statusP.style.color = 'red'; statusP.innerText = 'アップロード失敗: ' + data.message;
                 }
             } catch (error) {
-                statusP.style.color = 'red';
-                statusP.innerText = '通信エラーが発生しました。';
+                statusP.style.color = 'red'; statusP.innerText = '通信エラーが発生しました。';
             }
         });
 
-        // --- ギャラリー機能 (日付 → フォルダ に全面書き換え) ---
+        // --- ギャラリー機能 (3階層) ---
         
-        // (A) ページが読み込まれたら、まずフォルダリストを取得する
+        // (A) ページ読み込み時: まずカテゴリを読み込む
         document.addEventListener('DOMContentLoaded', () => {
-            loadFolders();
+            loadCategories();
         });
 
-        // (B) サーバーの「/api/folders」に通信して、フォルダボタンを作る関数
-        async function loadFolders() {
+        // (B) サーバーの「/api/categories」に通信して、カテゴリボタンを作る
+        async function loadCategories() {
             try {
-                const response = await fetch('/api/folders'); // ★API変更
-                const folders = await response.json(); // ['default', 'カードA', ...]
+                const response = await fetch('/api/categories');
+                const categories = await response.json(); // ['default_category', 'デュエマ', ...]
                 
-                folderContainer.innerHTML = ''; 
+                categoryContainer.innerHTML = '<h4>カテゴリ</h4>'; // 見出しを再設定
+                
+                if (categories.length === 0) {
+                    categoryStatus.innerText = 'データがありません。';
+                    categoryContainer.appendChild(categoryStatus); return;
+                }
 
+                categories.forEach(categoryName => {
+                    const category = document.createElement('div');
+                    category.className = 'category';
+                    category.innerText = categoryName;
+                    
+                    category.addEventListener('click', () => {
+                        loadFolders(categoryName); // ★(C)の関数を呼び出す
+                        document.querySelectorAll('.category').forEach(c => c.classList.remove('active'));
+                        category.classList.add('active');
+                        
+                        // ★入力欄に自動セット
+                        categoryNameInput.value = categoryName; 
+                        
+                        // フォルダリストと画像リストをリセット
+                        folderContainer.innerHTML = '<h4>フォルダ</h4><p>読み込み中...</p>';
+                        galleryContainer.innerHTML = '';
+                        csvButton.style.visibility = 'hidden';
+                        csvStatus.innerText = '(フォルダを選択するとボタンが有効になります)';
+                    });
+                    categoryContainer.appendChild(category);
+                });
+
+            } catch (error) {
+                console.error('カテゴリの読み込みエラー:', error);
+                categoryContainer.innerHTML = '<p style="color: red;">カテゴリの読み込みに失敗しました。</p>';
+            }
+        }
+
+        // (C) 「/api/folders_by_category/:cat」に通信して、フォルダボタンを作る
+        async function loadFolders(categoryName) {
+            try {
+                const encodedCategoryName = encodeURIComponent(categoryName);
+                const response = await fetch(`/api/folders_by_category/${encodedCategoryName}`);
+                const folders = await response.json(); // ['default_folder', '25EX2', ...]
+                
+                folderContainer.innerHTML = '<h4>フォルダ</h4>'; // 見出しを再設定
+                
                 if (folders.length === 0) {
-                    galleryStatus.innerText = 'アップロードされた画像はまだありません。';
-                    folderContainer.appendChild(galleryStatus);
-                    return;
+                    folderStatus.innerText = 'データがありません。';
+                    folderContainer.appendChild(folderStatus); return;
                 }
 
                 folders.forEach(folderName => {
@@ -161,61 +215,53 @@
                     folder.innerText = folderName;
                     
                     folder.addEventListener('click', () => {
-                        loadImagesByFolder(folderName); // ★関数変更
-                        
+                        loadImages(folderName); // ★(D)の関数を呼び出す
                         document.querySelectorAll('.folder').forEach(f => f.classList.remove('active'));
                         folder.classList.add('active');
                         
-                        // ★クリックしたフォルダ名を、アップロード欄の入力に自動でセット
+                        // ★入力欄に自動セット
                         folderNameInput.value = folderName; 
                     });
-                    
                     folderContainer.appendChild(folder);
                 });
-
-                // ★自動で最初のフォルダをクリックした状態にする
-                if (folders.length > 0) {
-                    folderContainer.children[0].click();
-                }
-
             } catch (error) {
                 console.error('フォルダの読み込みエラー:', error);
                 folderContainer.innerHTML = '<p style="color: red;">フォルダの読み込みに失敗しました。</p>';
             }
         }
 
-        // (C) サーバーの「/api/images/:folder」に通信して、画像ギャラリーを作る関数
-        async function loadImagesByFolder(folderName) { // ★関数変更
+        // (D) 「/api/images_by_folder/:folder」に通信して、画像ギャラリーを作る
+        async function loadImages(folderName) {
             try {
                 galleryContainer.innerHTML = '<p>画像を読み込み中...</p>'; 
                 
-                // ★API変更 (フォルダ名に / が含まれるとURLが壊れるのでエンコードする)
                 const encodedFolderName = encodeURIComponent(folderName);
-                const response = await fetch(`/api/images/${encodedFolderName}`); 
+                const response = await fetch(`/api/images_by_folder/${encodedFolderName}`); 
                 const images = await response.json(); 
 
                 galleryContainer.innerHTML = ''; 
                 
                 if (images.length === 0) {
                     galleryContainer.innerHTML = '<p>このフォルダに画像はありません。</p>';
-                    return;
+                } else {
+                    images.forEach(image => {
+                        const img = document.createElement('img');
+                        img.className = 'gallery-image';
+                        img.src = image.url; img.alt = image.title; img.title = image.title;
+                        galleryContainer.appendChild(img);
+                    });
                 }
-
-                images.forEach(image => {
-                    const img = document.createElement('img');
-                    img.className = 'gallery-image';
-                    img.src = image.url;   
-                    img.alt = image.title; 
-                    img.title = image.title;
-                    galleryContainer.appendChild(img);
-                });
+                
+                // ★【フォルダ別CSV機能】CSVダウンロードボタンを有効化
+                csvButton.href = `/download-csv?folder=${encodedFolderName}`;
+                csvButton.style.visibility = 'visible';
+                csvStatus.innerText = `「${folderName}」フォルダのCSVをダウンロードします。`;
 
             } catch (error) {
                 console.error('画像ギャラリーの読み込みエラー:', error);
                 galleryContainer.innerHTML = '<p style="color: red;">画像の読み込みに失敗しました。</p>';
             }
         }
-
     </script>
     </body>
 </html>
