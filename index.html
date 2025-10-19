@@ -36,7 +36,6 @@
 </head>
 <body>
 
-    {/* ▼▼▼ 改造点1: アップロード欄を4階層入力に変更 ▼▼▼ */}
     <div id="upload-section">
         <div><label for="cat1Input">1. 大カテゴリ名:</label><br><input type="text" id="cat1Input" value="default_cat1"></div>
         <div><label for="cat2Input">2. 中カテゴリ名:</label><br><input type="text" id="cat2Input" value="default_cat2"></div>
@@ -45,26 +44,22 @@
         <div style="grid-column: span 2;"><p>5. ファイルを選択</p><input type="file" id="imageInput" accept="image/*" multiple><button id="uploadButton">アップロード</button></div>
         <p id="uploadStatus" style="grid-column: span 3;"></p>
     </div>
-    {/* ▲▲▲ 改造点1ここまで ▲▲▲ */}
 
     <hr>
     <h3>履歴のダウンロード</h3><p>現在選択中の**フォルダ**のCSVをダウンロードします。</p><a href="#" id="csvDownloader" style="visibility: hidden;">CSVダウンロード</a><p id="csv-status-text">(フォルダを選択するとボタンが有効になります)</p><hr>
 
     <h3>階層別 ギャラリー</h3><p>大 → 中 → 小 → フォルダ の順に選択。(Eで編集、Xで削除はフォルダのみ)</p>
 
-    {/* ▼▼▼ 改造点2: ギャラリーを4カラムに変更 ▼▼▼ */}
     <div id="gallery-section">
         <div id="cat1-container" class="gallery-column"><h4>大カテゴリ</h4><p class="loading-status">読込中...</p></div>
         <div id="cat2-container" class="gallery-column"><h4>中カテゴリ</h4><p class="loading-status"></p></div>
         <div id="cat3-container" class="gallery-column"><h4>小カテゴリ</h4><p class="loading-status"></p></div>
         <div id="folder-container" class="gallery-column"><h4>フォルダ</h4><p class="loading-status"></p></div>
     </div>
-    {/* ▲▲▲ 改造点2ここまで ▲▲▲ */}
 
     <div id="search-section" style="display: none;"><label for="searchInput">画像検索:</label><input type="search" id="searchInput" placeholder="..."></div>
     <div id="image-gallery-container"></div>
 
-    {/* ▼▼▼ 改造点3: スクリプト(JavaScript)を4階層ロジックに全面書き換え ▼▼▼ */}
     <script>
         // --- HTML要素を取得 ---
         const fileInput = document.getElementById('imageInput');
@@ -84,15 +79,13 @@
         const searchSection = document.getElementById('search-section');
         const searchInput = document.getElementById('searchInput');
 
-        // 選択中の階層名を保持する変数
         let selections = { cat1: null, cat2: null, cat3: null, folder: null };
 
-        // --- アップロード機能 (4階層対応) ---
+        // --- アップロード機能 ---
         uploadButton.addEventListener('click', async () => {
             const files = fileInput.files;
             const cat1 = cat1Input.value.trim(); const cat2 = cat2Input.value.trim();
             const cat3 = cat3Input.value.trim(); const folderName = folderInput.value.trim();
-
             if (files.length === 0 || !cat1 || !cat2 || !cat3 || !folderName) {
                 alert('すべてのカテゴリ・フォルダ名を入力し、ファイルを選択してください。'); return;
             }
@@ -100,7 +93,6 @@
             formData.append('category1', cat1); formData.append('category2', cat2);
             formData.append('category3', cat3); formData.append('folderName', folderName);
             for (let i = 0; i < files.length; i++) { formData.append('imageFiles', files[i]); }
-
             statusP.style.color = 'blue'; statusP.innerText = `アップロード中...`;
             try {
                 const response = await fetch('/upload', { method: 'POST', body: formData });
@@ -108,20 +100,20 @@
                 if (response.ok) {
                     statusP.style.color = 'green'; statusP.innerText = data.message;
                     fileInput.value = '';
-                    loadCat1(); // アップロード成功したら階層をリフレッシュ
+                    loadCat1();
                 } else { throw new Error(data.message); }
             } catch (error) { statusP.style.color = 'red'; statusP.innerText = `失敗: ${error.message}`; }
         });
 
-        // --- ギャラリー機能 (4階層) ---
+        // --- ギャラリー機能 ---
         document.addEventListener('DOMContentLoaded', () => { loadCat1(); });
 
         // (A) 大カテゴリ(Cat1)読み込み
         async function loadCat1() {
-            resetUI(1); // Cat1以降をリセット
+            resetUI(1);
             await loadList('/api/cat1', cat1Container, '大カテゴリ', (cat1Name) => {
                 selections.cat1 = cat1Name; loadCat2(cat1Name);
-                cat1Input.value = cat1Name; // 入力欄にも反映
+                cat1Input.value = cat1Name;
             });
         }
         // (B) 中カテゴリ(Cat2)読み込み
@@ -144,9 +136,9 @@
         async function loadFolders(cat1, cat2, cat3) {
             resetUI(4);
             await loadList(`/api/folders/${encodeURIComponent(cat1)}/${encodeURIComponent(cat2)}/${encodeURIComponent(cat3)}`, folderContainer, 'フォルダ', (folderName) => {
-                selections.folder = folderName; loadImages(folderName);
+                selections.folder = folderName; loadImages(folderName); // ★画像読み込みトリガー
                 folderInput.value = folderName;
-            }, true); // ★ 最後のフォルダ階層だけ削除・編集ボタンを付ける
+            }, true); // Add action buttons for folders
         }
 
         // 汎用リスト読み込み関数
@@ -156,15 +148,12 @@
                 const response = await fetch(apiUrl);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const items = await response.json();
-                container.innerHTML = `<h4>${title}</h4>`; // 見出し再設定
+                container.innerHTML = `<h4>${title}</h4>`;
                 if (items.length === 0) { container.innerHTML += '<p>データなし</p>'; return; }
 
                 items.forEach(itemName => {
-                    const itemDiv = document.createElement('div');
-                    itemDiv.className = 'gallery-item'; // ★ フォルダ以外も .gallery-item を使う
-
-                    const nameSpan = document.createElement('span');
-                    nameSpan.innerText = itemName;
+                    const itemDiv = document.createElement('div'); itemDiv.className = 'gallery-item';
+                    const nameSpan = document.createElement('span'); nameSpan.innerText = itemName;
                     nameSpan.addEventListener('click', () => {
                         document.querySelectorAll(`#${container.id} .gallery-item`).forEach(el => el.classList.remove('active'));
                         itemDiv.classList.add('active');
@@ -172,7 +161,7 @@
                     });
                     itemDiv.appendChild(nameSpan);
 
-                    if (addActionButtons) { // フォルダの場合のみボタン追加
+                    if (addActionButtons) { // Only add for folders
                         const actionButtons = document.createElement('div'); actionButtons.className = 'action-buttons';
                         const editBtn = document.createElement('button'); editBtn.className = 'edit-btn'; editBtn.innerText = 'E'; editBtn.title = '名前変更';
                         editBtn.addEventListener('click', (e) => { e.stopPropagation(); renameFolder(itemName); });
@@ -186,7 +175,7 @@
             } catch (error) { console.error(`${title}読み込みエラー:`, error); container.innerHTML = `<h4>${title}</h4><p style="color: red;">失敗</p>`; }
         }
 
-        // UIリセット関数 (指定レベル以降のカラムをクリア)
+        // UIリセット関数
         function resetUI(startLevel) {
             if (startLevel <= 1) { selections.cat1 = null; cat2Container.innerHTML = '<h4>中カテゴリ</h4>'; }
             if (startLevel <= 2) { selections.cat2 = null; cat3Container.innerHTML = '<h4>小カテゴリ</h4>'; }
@@ -198,12 +187,12 @@
             }
         }
 
-        // (E) 画像読み込み (トリガー)
+        // (E) 画像読み込みトリガー
         async function loadImages(folderName) {
-            selections.folder = folderName; // 選択フォルダを更新
+            selections.folder = folderName;
             searchInput.value = '';
             searchSection.style.display = 'block';
-            await displayImages(folderName, '');
+            await displayImages(folderName, ''); // Call display function
         }
 
         // (F) 検索イベントリスナー
@@ -215,66 +204,77 @@
             }, 300);
         });
 
-        // (G) 画像取得・表示関数
+        // (G) 画像取得・表示関数 (★API URLを修正済み)
         async function displayImages(folderName, searchTerm) {
             try {
                 galleryContainer.innerHTML = '<p>読込中...</p>';
                 const encodedFolderName = encodeURIComponent(folderName);
-                let apiUrl = searchTerm ? `/api/search?folder=${encodedFolderName}&q=${encodeURIComponent(searchTerm)}` : `/api/images/${encodedFolderName}`; // ★画像APIエンドポイントを /api/images/:folderName に変更
+                let apiUrl;
+                if (searchTerm) {
+                    const encodedSearchTerm = encodeURIComponent(searchTerm);
+                    apiUrl = `/api/search?folder=${encodedFolderName}&q=${encodedSearchTerm}`;
+                } else {
+                    apiUrl = `/api/images/${encodedFolderName}`; // ★修正済みのURL
+                }
                 const response = await fetch(apiUrl);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const images = await response.json();
                 galleryContainer.innerHTML = '';
                 if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
-                else { images.forEach(imgData => { /* ... (img作成 - 省略) ... */ }); }
+                else {
+                    images.forEach(imgData => {
+                         const img = document.createElement('img');
+                         img.className='gallery-image';
+                         img.src=imgData.url;
+                         img.alt=imgData.title;
+                         img.title=imgData.title;
+                         galleryContainer.appendChild(img);
+                     });
+                }
                 csvButton.href = `/download-csv?folder=${encodedFolderName}`;
                 csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;
             } catch (error) { console.error('画像読込/検索エラー:', error); galleryContainer.innerHTML = '<p style="color: red;">失敗</p>'; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; }
         }
 
-        // (H) フォルダ削除関数 (★リフレッシュ処理を修正)
+        // (H) フォルダ削除関数
         async function deleteFolder(folderName) {
-            if (!confirm(`フォルダ「${folderName}」を完全削除しますか？`)) return;
+            if (!confirm(`フォルダ「${folderName}」を完全削除しますか？\n（R2の画像ファイルも削除されます）`)) return;
             try {
                 statusP.innerText = `削除中...`; statusP.style.color = 'blue';
                 const response = await fetch(`/api/folder/${encodeURIComponent(folderName)}`, { method: 'DELETE' });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const data = await response.json();
                 statusP.innerText = data.message; statusP.style.color = 'green';
-                // ★ 削除が成功したら、現在のカテゴリのフォルダリストを再読み込み
                 if(selections.cat1 && selections.cat2 && selections.cat3) {
-                   loadFolders(selections.cat1, selections.cat2, selections.cat3);
-                } else { loadCat1(); } // もし途中の階層情報がなければ最初から
-                resetUI(4); // 画像ギャラリーなどをリセット
+                   loadFolders(selections.cat1, selections.cat2, selections.cat3); // Refresh current folder list
+                } else { loadCat1(); }
+                resetUI(4);
             } catch (error) { console.error('削除エラー:', error); statusP.innerText = '削除失敗'; statusP.style.color = 'red'; }
         }
 
-        // (I) フォルダ名変更関数 (★リフレッシュ処理を修正)
+        // (I) フォルダ名変更関数
         async function renameFolder(oldFolderName) {
             const newFolderName = prompt(`「${oldFolderName}」の新しい名前:`, oldFolderName);
-            if (!newFolderName || newFolderName.trim() === '' || newFolderName === oldFolderName) return;
+            if (!newFolderName || newFolderName.trim() === '' || newFolderName.trim() === oldFolderName) return;
             try {
                 statusP.innerText = `変更中...`; statusP.style.color = 'blue';
                 const response = await fetch(`/api/folder/${encodeURIComponent(oldFolderName)}`, {
                     method: 'PUT', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ newFolderName: newFolderName.trim() })
                 });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                if (!response.ok) {
+                    const errData = await response.json(); // Try to get error message from server
+                    throw new Error(errData.message || `HTTP ${response.status}`);
+                }
                 const data = await response.json();
                 statusP.innerText = data.message; statusP.style.color = 'green';
-                 // ★ 名前変更が成功したら、現在のカテゴリのフォルダリストを再読み込み
                 if(selections.cat1 && selections.cat2 && selections.cat3) {
-                   loadFolders(selections.cat1, selections.cat2, selections.cat3);
+                   loadFolders(selections.cat1, selections.cat2, selections.cat3); // Refresh current folder list
                 } else { loadCat1(); }
                 resetUI(4);
-            } catch (error) { console.error('名前変更エラー:', error); statusP.innerText = '変更失敗'; statusP.style.color = 'red'; }
+            } catch (error) { console.error('名前変更エラー:', error); statusP.innerText = `変更失敗: ${error.message}`; statusP.style.color = 'red'; }
         }
 
-        // --- 省略した関数の補足 ---
-        // displayImages内の img作成: const img = document.createElement('img'); img.className='gallery-image'; img.src=imgData.url; img.alt=imgData.title; img.title=imgData.title; galleryContainer.appendChild(img);
-        // deleteFolder内の確認メッセージ: フォルダ削除の確認メッセージ
-        // renameFolder内のプロンプト: フォルダ名変更のプロンプト
     </script>
-    {/* ▲▲▲ スクリプト(JavaScript)ここまで ▲▲▲ */}
 </body>
 </html>
