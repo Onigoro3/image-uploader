@@ -12,9 +12,9 @@ const session = require('express-session');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const bcrypt = require('bcryptjs');
-const PgSession = require('connect-pg-simple')(session); // セッションをDBに保存
+const PgSession = require('connect-pg-simple')(session);
 const flash = require('connect-flash');
-const ejs = require('ejs'); // テンプレートエンジン
+const ejs = require('ejs');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -45,7 +45,7 @@ app.use(session({
     secret: process.env.SESSION_SECRET || 'a_very_secret_key_that_should_be_in_env', 
     resave: false,
     saveUninitialized: false, 
-    cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 } // 30日間有効
+    cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 } 
 }));
 app.use(flash()); 
 
@@ -64,7 +64,7 @@ passport.use(new LocalStrategy(
             const user = rows[0];
             const isMatch = await bcrypt.compare(password, user.password_hash);
             if (isMatch) {
-                return done(null, user); // ログイン成功
+                return done(null, user); 
             } else {
                 return done(null, false, { message: 'パスワードが間違っています。' });
             }
@@ -165,19 +165,16 @@ const upload = multer({
 
 // --- 認証（ログイン）不要のルート ---
 
-// 1. ログインページ (GET)
 app.get('/login', (req, res) => {
     res.render('login.html', { messages: req.flash('error') });
 });
 
-// 2. ログイン処理 (POST)
 app.post('/login', passport.authenticate('local', {
     successRedirect: '/', 
     failureRedirect: '/login', 
     failureFlash: true 
 }));
 
-// 3. ログアウト処理 (GET)
 app.get('/logout', (req, res, next) => {
     req.logout((err) => {
         if (err) { return next(err); }
@@ -188,7 +185,6 @@ app.get('/logout', (req, res, next) => {
 
 // --- ★★★ ここから下は、すべて「ログイン必須」のルート ★★★ ---
 
-// 「ログインしていますか？」をチェックする"関所"
 function isAuthenticated(req, res, next) {
     if (req.isAuthenticated()) { 
         return next(); 
@@ -196,12 +192,10 @@ function isAuthenticated(req, res, next) {
     res.redirect('/login');
 }
 
-// 4. メインページ ( / )
 app.get('/', isAuthenticated, (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// 5. アップロードAPI (/upload) 
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
     const { categoryName, folderName } = req.body; 
     if (!categoryName || categoryName.trim() === '') { return res.status(400).json({ message: 'カテゴリ名が指定されていません。' }); }
@@ -227,7 +221,6 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
     }
 });
 
-// 6. フォルダ別CSV API (/download-csv) 
 app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
         const { folder } = req.query; 
@@ -260,7 +253,6 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
     }
 });
 
-// 7. カテゴリリストAPI (/api/categories)
 app.get('/api/categories', isAuthenticated, async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT DISTINCT category_name FROM images ORDER BY category_name');
@@ -271,7 +263,6 @@ app.get('/api/categories', isAuthenticated, async (req, res) => {
     }
 });
 
-// 8. フォルダリストAPI (/api/folders_by_category/:categoryName)
 app.get('/api/folders_by_category/:categoryName', isAuthenticated, async (req, res) => {
     try {
         const { categoryName } = req.params; 
@@ -285,7 +276,6 @@ app.get('/api/folders_by_category/:categoryName', isAuthenticated, async (req, r
     }
 });
 
-// 9. 画像リストAPI (/api/images_by_folder/:folderName)
 app.get('/api/images_by_folder/:folderName', isAuthenticated, async (req, res) => {
     try {
         const { folderName } = req.params; 
@@ -299,7 +289,6 @@ app.get('/api/images_by_folder/:folderName', isAuthenticated, async (req, res) =
     }
 });
 
-// 10. フォルダ削除API (/api/folder/:folderName)
 app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
     const { folderName } = req.params;
     try {
@@ -320,14 +309,48 @@ app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
     }
 });
 
+
 // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-// 
-// 11. 【★初回セットアップ用★】 のブロックは、
-//     あなたが 10:04 に「セットアップ成功」したので、削除済みです。
-// 
+// 11. 【★パスワード再設定用★】 管理者ユーザーを作成・または更新する
+// このコードは、ユーザー作成後に必ず削除してください！
+app.get('/setup-admin-user', async (req, res) => { // ★ isAuthenticated を削除
+    
+    // ★★★ あなたのユーザー名と「新しいパスワード」に書き換えてください ★★★
+    const username = 'onicard8580'; // (あなたのユーザー名)
+    const new_password = '2580core'; // (★新しいパスワード！)
+
+    try {
+        // pgcrypto拡張を有効化
+        await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
+        
+        // パスワードをハッシュ化
+        const salt = await bcrypt.genSalt(10);
+        const password_hash = await bcrypt.hash(new_password, salt);
+
+        // ★★★ 改造点: ユーザーが存在したら「パスワードを更新(UPDATE)」するSQL ★★★
+        const resetQuery = `
+            INSERT INTO users (username, password_hash) 
+            VALUES ($1, $2) 
+            ON CONFLICT (username) 
+            DO UPDATE SET password_hash = $2;
+        `;
+        
+        await pool.query(resetQuery, [username, password_hash]);
+
+        res.status(200).send(
+            `<h1>パスワードリセット成功</h1>` +
+            `<p>ユーザー名「${username}」のパスワードを上書き（または新規作成）しました。</p>` +
+            `<p><b>【最重要】</b>今すぐ server.js から /setup-admin-user のコードを削除し、git push してください！</p>` +
+            `<a href="/">ログインページに戻る</a>`
+        );
+    } catch (err) {
+        console.error('管理者ユーザーの作成/更新に失敗:', err);
+        res.status(500).send('管理者ユーザーの作成/更新に失敗しました。');
+    }
+});
 // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-// --- サーバーの起動 (★1回だけ) ---
+// --- サーバーの起動 ---
 app.listen(port, async () => {
     await createTable(); 
     console.log(`サーバーが http://localhost:${port} で起動しました`);
