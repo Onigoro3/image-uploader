@@ -2,12 +2,15 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>画像アップローダー (ギャラリー機能付き)</title>
+    <title>画像アップローダー (フォルダ機能付き)</title>
     <style>
         body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
         hr { margin: 2em 0; }
+        input[type="text"] { padding: 5px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 5px 10px; cursor: pointer; }
         
         /* アップロード欄 */
+        #upload-section { background: #f9f9f9; padding: 15px; border-radius: 8px; }
         #uploadStatus { font-weight: bold; }
         
         /* CSVダウンロードボタン */
@@ -16,64 +19,51 @@
             background-color: #007bff; color: white;
             text-decoration: none; border-radius: 4px;
         }
-        #csvDownloader:hover { background-color: #0056b3; }
+        
+        /* フォルダ（ボタン風） */
+        .folder {
+            padding: 10px 15px; border: 1px solid #ccc;
+            border-radius: 5px; background-color: #f4f4f4;
+            cursor: pointer; font-weight: bold;
+        }
+        .folder.active { /* 選択中のフォルダ */
+            background-color: #007bff; color: white; border-color: #007bff;
+        }
 
-        /* --- ここから新機能のスタイル --- */
-        
-        /* 日付フォルダのコンテナ */
-        #date-folders-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px; /* フォルダ間のすき間 */
-        }
-        
-        /* 日付フォルダ（ボタン風） */
-        .date-folder {
-            padding: 10px 15px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            background-color: #f4f4f4;
-            cursor: pointer; /* クリックできることを示す */
-            font-weight: bold;
-        }
-        .date-folder:hover {
-            background-color: #e9e9e9;
-        }
-        .date-folder.active {
-            /* 選択中のフォルダのデザイン */
-            background-color: #007bff;
-            color: white;
-            border-color: #007bff;
+        /* フォルダのコンテナ */
+        #folder-container {
+            display: flex; flex-wrap: wrap; gap: 10px;
         }
 
         /* 画像ギャラリーのコンテナ */
         #image-gallery-container {
             display: grid;
-            /* 画像を自動で折り返して並べる（1列150px、すき間10px） */
             grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 10px;
-            margin-top: 20px;
-            border-top: 2px solid #eee;
-            padding-top: 20px;
+            gap: 10px; margin-top: 20px;
+            border-top: 2px solid #eee; padding-top: 20px;
         }
         
         /* ギャラリー内の各画像 */
         .gallery-image {
-            width: 100%;
-            height: 150px;
-            object-fit: cover; /* 画像の比率を保ったまま枠に収める */
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            width: 100%; height: 150px;
+            object-fit: cover; border: 1px solid #ddd; border-radius: 4px;
         }
     </style>
     </head>
 <body>
 
-    <h2>画像をアップロード (複数選択可)</h2>
-    <input type="file" id="imageInput" accept="image/*" multiple>
-    <button id="uploadButton">アップロード</button>
-    <p id="uploadStatus"></p>
-
+    <div id="upload-section">
+        <h2>画像をアップロード</h2>
+        <p>
+            <label for="folderNameInput"><b>保存先フォルダ名:</b></label><br>
+            <input type="text" id="folderNameInput" value="default" placeholder="フォルダ名 (例: カードA)">
+        </p>
+        <p>
+            <input type="file" id="imageInput" accept="image/*" multiple>
+            <button id="uploadButton">アップロード</button>
+        </p>
+        <p id="uploadStatus"></p>
+    </div>
     <hr>
 
     <h3>履歴のダウンロード</h3>
@@ -81,43 +71,59 @@
     <a href="/download-csv" id="csvDownloader">CSVダウンロード</a>
 
     <hr>
+    <h3>フォルダ別 ギャラリー</h3>
+    <p>フォルダをクリックすると、その中に保存された画像が表示されます。</p>
     
-    <h3>日付別 ギャラリー</h3>
-    <p>日付をクリックすると、その日にアップロードされた画像が表示されます。</p>
-    
-    <div id="date-folders-container">
+    <div id="folder-container">
         <p id="gallery-loading-status">ギャラリーを読み込み中...</p>
     </div>
     
     <div id="image-gallery-container"></div>
-    
     <script>
-        // --- アップロード機能 (変更なし) ---
-        document.getElementById('uploadButton').addEventListener('click', async () => {
-            const fileInput = document.getElementById('imageInput');
-            const statusP = document.getElementById('uploadStatus');
+        // --- HTML要素を取得 ---
+        const fileInput = document.getElementById('imageInput');
+        const folderNameInput = document.getElementById('folderNameInput'); // ★追加
+        const uploadButton = document.getElementById('uploadButton');
+        const statusP = document.getElementById('uploadStatus');
+        
+        const folderContainer = document.getElementById('folder-container');
+        const galleryContainer = document.getElementById('image-gallery-container');
+        const galleryStatus = document.getElementById('gallery-loading-status');
+
+        // --- アップロード機能 (フォルダ名も一緒に送るよう改造) ---
+        uploadButton.addEventListener('click', async () => {
             const files = fileInput.files;
-            
+            const folderName = folderNameInput.value.trim(); // ★入力されたフォルダ名を取得
+
             if (files.length === 0) {
                 alert('画像が選択されていません。'); return;
             }
+            if (folderName === '') {
+                alert('フォルダ名を入力してください。'); return;
+            }
+
+            // フォームデータ（画像とフォルダ名）を準備
             const formData = new FormData();
+            formData.append('folderName', folderName); // ★フォルダ名を追加
             for (let i = 0; i < files.length; i++) {
                 formData.append('imageFiles', files[i]);
             }
+
             statusP.style.color = 'blue';
-            statusP.innerText = `アップロード中... (${files.length} 件)`;
+            statusP.innerText = `「${folderName}」にアップロード中... (${files.length} 件)`;
+            
             try {
                 const response = await fetch('/upload', {
                     method: 'POST', body: formData
                 });
                 const data = await response.json();
+                
                 if (response.ok) {
                     statusP.style.color = 'green';
                     statusP.innerText = data.message;
                     fileInput.value = '';
-                    // ★【追加】アップロード成功したら、日付リストを再読み込み
-                    loadDateFolders(); 
+                    // ★アップロード成功したら、フォルダリストを再読み込み
+                    loadFolders(); 
                 } else {
                     statusP.style.color = 'red';
                     statusP.innerText = 'アップロード失敗: ' + data.message;
@@ -128,86 +134,79 @@
             }
         });
 
-        // --- ここから新機能のスクリプト ---
+        // --- ギャラリー機能 (日付 → フォルダ に全面書き換え) ---
         
-        const dateContainer = document.getElementById('date-folders-container');
-        const galleryContainer = document.getElementById('image-gallery-container');
-        const galleryStatus = document.getElementById('gallery-loading-status');
-
-        // (A) ページが読み込まれたら、まず日付リストを取得する
+        // (A) ページが読み込まれたら、まずフォルダリストを取得する
         document.addEventListener('DOMContentLoaded', () => {
-            loadDateFolders();
+            loadFolders();
         });
 
-        // (B) サーバーの「/api/dates」に通信して、日付フォルダを作る関数
-        async function loadDateFolders() {
+        // (B) サーバーの「/api/folders」に通信して、フォルダボタンを作る関数
+        async function loadFolders() {
             try {
-                const response = await fetch('/api/dates'); // サーバーのAPIを叩く
-                const dates = await response.json(); // ['2025-10-19', '2025-10-18', ...]
+                const response = await fetch('/api/folders'); // ★API変更
+                const folders = await response.json(); // ['default', 'カードA', ...]
                 
-                dateContainer.innerHTML = ''; // 「読み込み中...」の文字を消す
+                folderContainer.innerHTML = ''; 
 
-                if (dates.length === 0) {
+                if (folders.length === 0) {
                     galleryStatus.innerText = 'アップロードされた画像はまだありません。';
-                    dateContainer.appendChild(galleryStatus);
+                    folderContainer.appendChild(galleryStatus);
                     return;
                 }
 
-                // 取得した日付の数だけ、フォルダ(div)を作る
-                dates.forEach(dateStr => {
+                folders.forEach(folderName => {
                     const folder = document.createElement('div');
-                    folder.className = 'date-folder';
-                    folder.innerText = dateStr;
+                    folder.className = 'folder';
+                    folder.innerText = folderName;
                     
-                    // ★フォルダがクリックされた時の動作を設定
                     folder.addEventListener('click', () => {
-                        // (C) の関数を呼び出す
-                        loadImagesByDate(dateStr); 
+                        loadImagesByFolder(folderName); // ★関数変更
                         
-                        // クリックされたフォルダだけ見た目を変える
-                        document.querySelectorAll('.date-folder').forEach(f => f.classList.remove('active'));
+                        document.querySelectorAll('.folder').forEach(f => f.classList.remove('active'));
                         folder.classList.add('active');
+                        
+                        // ★クリックしたフォルダ名を、アップロード欄の入力に自動でセット
+                        folderNameInput.value = folderName; 
                     });
                     
-                    dateContainer.appendChild(folder);
+                    folderContainer.appendChild(folder);
                 });
 
-                // ★自動で最初の日付をクリックした状態にする
-                if (dates.length > 0) {
-                    dateContainer.children[0].click();
+                // ★自動で最初のフォルダをクリックした状態にする
+                if (folders.length > 0) {
+                    folderContainer.children[0].click();
                 }
 
             } catch (error) {
-                console.error('日付フォルダの読み込みエラー:', error);
-                dateContainer.innerHTML = '<p style="color: red;">日付フォルダの読み込みに失敗しました。</p>';
+                console.error('フォルダの読み込みエラー:', error);
+                folderContainer.innerHTML = '<p style="color: red;">フォルダの読み込みに失敗しました。</p>';
             }
         }
 
-        // (C) サーバーの「/api/images/:date」に通信して、画像ギャラリーを作る関数
-        async function loadImagesByDate(date) {
+        // (C) サーバーの「/api/images/:folder」に通信して、画像ギャラリーを作る関数
+        async function loadImagesByFolder(folderName) { // ★関数変更
             try {
-                // 読み込み中にギャラリーを一度空にする
                 galleryContainer.innerHTML = '<p>画像を読み込み中...</p>'; 
                 
-                // サーバーのAPIを叩く (例: /api/images/2025-10-19)
-                const response = await fetch(`/api/images/${date}`);
-                const images = await response.json(); // [{title: 'a.jpg', url: '...'}, ...]
+                // ★API変更 (フォルダ名に / が含まれるとURLが壊れるのでエンコードする)
+                const encodedFolderName = encodeURIComponent(folderName);
+                const response = await fetch(`/api/images/${encodedFolderName}`); 
+                const images = await response.json(); 
 
-                galleryContainer.innerHTML = ''; // 「読み込み中...」を消す
+                galleryContainer.innerHTML = ''; 
                 
                 if (images.length === 0) {
-                    galleryContainer.innerHTML = '<p>この日付の画像はありません。</p>';
+                    galleryContainer.innerHTML = '<p>このフォルダに画像はありません。</p>';
                     return;
                 }
 
-                // 取得した画像の数だけ、画像タグ(img)を作る
                 images.forEach(image => {
                     const img = document.createElement('img');
                     img.className = 'gallery-image';
-                    img.src = image.url;   // 画像URL
-                    img.alt = image.title; // 題名
-                    img.title = image.title; // ホバーで題名表示
-                    
+                    img.src = image.url;   
+                    img.alt = image.title; 
+                    img.title = image.title;
                     galleryContainer.appendChild(img);
                 });
 
