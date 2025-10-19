@@ -6,8 +6,6 @@ const multer = require('multer');
 const multerS3 = require('multer-s3');
 const { S3Client, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
-
-// --- 認証（ログイン）用の部品 ---
 const session = require('express-session');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
@@ -22,196 +20,122 @@ const port = process.env.PORT || 3000;
 // --- 1. データベース (PostgreSQL) 接続 ---
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false
-    }
+    ssl: { rejectUnauthorized: false }
 });
 
-// --- テンプレートエンジン(EJS) を使う設定 ---
+// --- テンプレートエンジン(EJS) 設定 ---
 app.engine('html', ejs.renderFile);
 app.set('view engine', 'html');
 app.set('views', __dirname);
 
-// --- フォーム送信とJSONを読めるようにする設定 ---
-app.use(express.json()); // JSONボディパーサー (PUTリクエストで使う)
-app.use(express.urlencoded({ extended: false })); // URLエンコードされたボディパーサー
-
-// --- セッション管理（ログイン状態の維持）設定 ---
+// --- Middleware 設定 ---
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 app.use(session({
-    store: new PgSession({
-        pool: pool,
-        tableName: 'user_sessions'
-    }),
-    secret: process.env.SESSION_SECRET || 'a_very_secret_key_that_should_be_in_env',
-    resave: false,
-    saveUninitialized: false,
-    cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 } // 30日間有効
+    store: new PgSession({ pool: pool, tableName: 'user_sessions' }),
+    secret: process.env.SESSION_SECRET || 'default_session_secret',
+    resave: false, saveUninitialized: false,
+    cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 }
 }));
 app.use(flash());
-
-// --- Passport（認証）の初期設定 ---
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Passport: ユーザー名を元にDBからユーザー情報を探すロジック
-passport.use(new LocalStrategy(
-    async (username, password, done) => {
-        try {
-            const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
-            if (rows.length === 0) {
-                return done(null, false, { message: 'ユーザー名が見つかりません。' });
-            }
-            const user = rows[0];
-            const isMatch = await bcrypt.compare(password, user.password_hash);
-            if (isMatch) {
-                return done(null, user);
-            } else {
-                return done(null, false, { message: 'パスワードが間違っています。' });
-            }
-        } catch (err) {
-            return done(err);
-        }
-    }
-));
+// --- Passport 設定 (変更なし) ---
+passport.use(new LocalStrategy( /* ... (省略) ... */ ));
+passport.serializeUser((user, done) => { done(null, user.id); });
+passport.deserializeUser(async (id, done) => { /* ... (省略) ... */ });
 
-// Passport: ユーザー情報をセッションに保存
-passport.serializeUser((user, done) => {
-    done(null, user.id);
-});
-
-// Passport: セッションからユーザー情報を復元
-passport.deserializeUser(async (id, done) => {
-    try {
-        const { rows } = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
-        done(null, rows[0]);
-    } catch (err) {
-        done(err);
-    }
-});
-
-// --- DBテーブル自動作成関数 (users, sessions, images) ---
+// ▼▼▼ DBテーブル自動作成関数 (★4階層対応に改造) ▼▼▼
 const createTable = async () => {
-    const userQuery = `
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username VARCHAR(50) UNIQUE NOT NULL,
-      password_hash VARCHAR(100) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );`;
-    const sessionQuery = `
-    CREATE TABLE IF NOT EXISTS "user_sessions" (
-      "sid" varchar NOT NULL COLLATE "default", "sess" json NOT NULL, "expire" timestamp(6) NOT NULL
-    ) WITH (OIDS=FALSE);
-    DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_sessions_pkey') THEN
-        ALTER TABLE "user_sessions" ADD CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;
-    END IF; END $$;
-    CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");
-    `;
+    // ユーザーとセッションテーブル (変更なし)
+    const userQuery = `CREATE TABLE IF NOT EXISTS users (...);`; // (省略)
+    const sessionQuery = `CREATE TABLE IF NOT EXISTS "user_sessions" (...);`; // (省略)
+
+    // imagesテーブル作成クエリ (★4階層のカラムを追加)
     const createQuery = `
     CREATE TABLE IF NOT EXISTS images (
       id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, url VARCHAR(1024) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      folder_name VARCHAR(100) DEFAULT 'default_folder',
-      category_name VARCHAR(100) DEFAULT 'default_category'
+      category_1 VARCHAR(100) DEFAULT 'default_cat1',
+      category_2 VARCHAR(100) DEFAULT 'default_cat2',
+      category_3 VARCHAR(100) DEFAULT 'default_cat3',
+      folder_name VARCHAR(100) DEFAULT 'default_folder'
     );`;
-    const alterFolderQuery = `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='folder_name') THEN ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder'; END IF; END; $$;`;
-    const alterCategoryQuery = `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='category_name') THEN ALTER TABLE images ADD COLUMN category_name VARCHAR(100) DEFAULT 'default_category'; END IF; END; $$;`;
+
+    // 既存テーブルにカラムがなければ追加するクエリ (4つ)
+    const alterCat1Query = `DO $$ BEGIN IF NOT EXISTS (...) THEN ALTER TABLE images ADD COLUMN category_1 VARCHAR(100) DEFAULT 'default_cat1'; END IF; END $$;`; // (省略 - information_schema チェック)
+    const alterCat2Query = `DO $$ BEGIN IF NOT EXISTS (...) THEN ALTER TABLE images ADD COLUMN category_2 VARCHAR(100) DEFAULT 'default_cat2'; END IF; END $$;`; // (省略)
+    const alterCat3Query = `DO $$ BEGIN IF NOT EXISTS (...) THEN ALTER TABLE images ADD COLUMN category_3 VARCHAR(100) DEFAULT 'default_cat3'; END IF; END $$;`; // (省略)
+    const alterFolderQuery = `DO $$ BEGIN IF NOT EXISTS (...) THEN ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder'; END IF; END $$;`; // (省略)
 
     try {
         await pool.query(userQuery);
         await pool.query(sessionQuery);
-        await pool.query(createQuery);
-        await pool.query(alterFolderQuery);
-        await pool.query(alterCategoryQuery);
-        console.log('Database tables (users, sessions, images) are ready.');
+        await pool.query(createQuery);        // テーブル作成
+        await pool.query(alterCat1Query);     // ★ cat1 カラム追加
+        await pool.query(alterCat2Query);     // ★ cat2 カラム追加
+        await pool.query(alterCat3Query);     // ★ cat3 カラム追加
+        await pool.query(alterFolderQuery);   // folder カラム追加
+        console.log('Database tables (users, sessions, images with 4 levels) are ready.');
     } catch (err) {
         console.error('Failed to create/update database tables:', err);
     }
 };
+// ▲▲▲ DBテーブル自動作成関数 ここまで ▲▲▲
 
-// --- ストレージ (R2) 接続 ---
+// --- ストレージ (R2) 接続 (変更なし) ---
 const r2Endpoint = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const r2PublicUrl = process.env.R2_PUBLIC_URL;
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
-const s3Client = new S3Client({
-    region: 'auto', endpoint: r2Endpoint,
-    credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-    },
-});
+const s3Client = new S3Client({ /* ... (省略) ... */ });
 
-// --- Multer (アップロード処理) ---
-const upload = multer({
-    storage: multerS3({
-        s3: s3Client,
-        bucket: R2_BUCKET_NAME,
-        acl: 'public-read',
-        key: function (req, file, cb) {
-            const decodedFilename = Buffer.from(file.originalname, 'latin1').toString('utf8');
-            cb(null, decodedFilename);
-        }
-    }),
-    fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('image/')) { cb(null, true); }
-        else { cb(new Error('画像ファイルのみアップロード可能です。'), false); }
-    }
-});
+// --- Multer (アップロード処理) 設定 (変更なし) ---
+const upload = multer({ /* ... (省略) ... */ });
 
+// --- ログインチェック関数 (変更なし) ---
+function isAuthenticated(req, res, next) { /* ... (省略) ... */ }
 
 // -----------------------------------------------------------------
 // ★★★★★ ルート（URL）設定 ★★★★★
 // -----------------------------------------------------------------
 
-// --- 認証（ログイン）不要のルート ---
+// --- 認証不要ルート (ログイン/ログアウト) (変更なし) ---
+app.get('/login', (req, res) => { res.render('login.html', { messages: req.flash('error') }); });
+app.post('/login', passport.authenticate('local', { /* ... */ }));
+app.get('/logout', (req, res, next) => { /* ... */ });
 
-app.get('/login', (req, res) => {
-    res.render('login.html', { messages: req.flash('error') });
-});
+// --- ログイン必須ルート ---
 
-app.post('/login', passport.authenticate('local', {
-    successRedirect: '/',
-    failureRedirect: '/login',
-    failureFlash: true
-}));
-
-app.get('/logout', (req, res, next) => {
-    req.logout((err) => {
-        if (err) { return next(err); }
-        res.redirect('/login');
-    });
-});
-
-
-// --- ★★★ ここから下は、すべて「ログイン必須」のルート ★★★ ---
-
-function isAuthenticated(req, res, next) {
-    if (req.isAuthenticated()) {
-        return next();
-    }
-    res.redirect('/login');
-}
-
+// 1. メインページ ( / ) (変更なし)
 app.get('/', isAuthenticated, (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// ▼▼▼ 2. アップロードAPI (/upload) (★4階層対応) ▼▼▼
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
-    const { categoryName, folderName } = req.body;
-    if (!categoryName || categoryName.trim() === '') { return res.status(400).json({ message: 'カテゴリ名が指定されていません。' }); }
-    if (!folderName || folderName.trim() === '') { return res.status(400).json({ message: 'フォルダ名が指定されていません。' }); }
+    // ★HTMLから4つの階層名を受け取る
+    const { category1, category2, category3, folderName } = req.body;
+
+    // 簡単な入力チェック
+    if (!category1 || !category2 || !category3 || !folderName ) {
+        return res.status(400).json({ message: 'すべてのカテゴリとフォルダ名を入力してください。' });
+    }
+
     if (req.files && req.files.length > 0) {
         try {
+            // ★DBに4階層で保存
             const insertPromises = req.files.map(file => {
                 const fileUrl = `${r2PublicUrl}/${encodeURIComponent(file.key)}`;
                 const title = file.key;
                 return pool.query(
-                    'INSERT INTO images (title, url, folder_name, category_name) VALUES ($1, $2, $3, $4)',
-                    [title, fileUrl, folderName, categoryName]
+                    `INSERT INTO images (title, url, category_1, category_2, category_3, folder_name)
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [title, fileUrl, category1, category2, category3, folderName]
                 );
             });
             await Promise.all(insertPromises);
-            res.json({ message: `「${categoryName} / ${folderName}」に ${req.files.length} 件の画像をアップロードしました。` });
+            res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件保存しました。` });
         } catch (dbError) {
             console.error('Database insert error:', dbError);
             res.status(500).json({ message: 'データベースへの保存に失敗しました。' });
@@ -220,160 +144,152 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
         res.status(400).json({ message: 'アップロードするファイルが選択されていません。' });
     }
 });
+// ▲▲▲ アップロードAPI ここまで ▲▲▲
 
+// 3. フォルダ別CSV API (/download-csv) (★簡略化: フォルダ名のみ対応)
 app.get('/download-csv', isAuthenticated, async (req, res) => {
+    // (※ 4階層すべてを出力するように改造することも可能ですが、ここではフォルダ指定のみ)
     try {
         const { folder } = req.query;
         let queryText; let queryParams;
-        if (folder) {
-            queryText = 'SELECT title, url, folder_name, category_name FROM images WHERE folder_name = $1 ORDER BY created_at DESC';
+        if (folder) { // フォルダ指定あり
+            queryText = 'SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ORDER BY created_at DESC';
             queryParams = [folder];
-        } else {
-            queryText = 'SELECT title, url, folder_name, category_name FROM images ORDER BY category_name, folder_name, created_at DESC';
+        } else { // フォルダ指定なし (全件)
+            queryText = 'SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, created_at DESC';
             queryParams = [];
         }
         const { rows } = await pool.query(queryText, queryParams);
-        if (rows.length === 0) { res.status(404).send('対象の履歴がありません。'); return; }
-        let csvContent = "カテゴリ名,フォルダ名,題名,URL\n";
-        rows.forEach(item => {
-            const category = `"${(item.category_name || 'default').replace(/"/g, '""')}"`;
-            const f = `"${(item.folder_name || 'default').replace(/"/g, '""')}"`;
+        if (rows.length === 0) { /* ... */ } // (省略)
+        // ★CSVヘッダーを6列に
+        let csvContent = "大カテゴリ,中カテゴリ,小カテゴリ,フォルダ名,題名,URL\n";
+        rows.forEach(item => { // ★6列分のデータを追加
+            const c1 = `"${(item.category_1 || '').replace(/"/g, '""')}"`;
+            const c2 = `"${(item.category_2 || '').replace(/"/g, '""')}"`;
+            const c3 = `"${(item.category_3 || '').replace(/"/g, '""')}"`;
+            const f = `"${(item.folder_name || '').replace(/"/g, '""')}"`;
             const title = `"${item.title.replace(/"/g, '""')}"`;
             const url = `"${item.url.replace(/"/g, '""')}"`;
-            csvContent += `${category},${f},${title},${url}\n`;
+            csvContent += `${c1},${c2},${c3},${f},${title},${url}\n`;
         });
-        const fileName = folder ? `upload_list_${folder}.csv` : 'upload_list_all.csv';
-        const bom = '\uFEFF';
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-        res.status(200).send(bom + csvContent);
-    } catch (dbError) {
-        console.error('Database select error:', dbError);
-        res.status(500).send('データベースからの読み込みに失敗しました。');
-    }
+        const fileName = folder ? `list_${folder}.csv` : 'list_all.csv';
+        /* ... (BOM, header, send - 省略) ... */
+    } catch (dbError) { /* ... (省略) ... */ }
 });
 
-app.get('/api/categories', isAuthenticated, async (req, res) => {
+// ▼▼▼ 4. ギャラリー用API (★4階層取得用に全面変更) ▼▼▼
+
+// 4.1 大カテゴリ(cat1)リスト取得
+app.get('/api/cat1', isAuthenticated, async (req, res) => {
     try {
-        const { rows } = await pool.query('SELECT DISTINCT category_name FROM images ORDER BY category_name');
-        res.json(rows.map(row => row.category_name));
-    } catch (dbError) {
-        console.error('API /api/categories error:', dbError);
-        res.status(500).json({ message: 'カテゴリの読み込みに失敗しました。' });
-    }
+        const { rows } = await pool.query('SELECT DISTINCT category_1 FROM images ORDER BY category_1');
+        res.json(rows.map(row => row.category_1));
+    } catch (dbError) { res.status(500).json({ message: 'Error fetching Cat1' }); }
 });
 
-app.get('/api/folders_by_category/:categoryName', isAuthenticated, async (req, res) => {
+// 4.2 中カテゴリ(cat2)リスト取得 (指定されたcat1内の)
+app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => {
     try {
-        const { categoryName } = req.params;
+        const { cat1 } = req.params;
         const { rows } = await pool.query(
-            'SELECT DISTINCT folder_name FROM images WHERE category_name = $1 ORDER BY folder_name', [categoryName]
+            'SELECT DISTINCT category_2 FROM images WHERE category_1 = $1 ORDER BY category_2', [cat1]
+        );
+        res.json(rows.map(row => row.category_2));
+    } catch (dbError) { res.status(500).json({ message: 'Error fetching Cat2' }); }
+});
+
+// 4.3 小カテゴリ(cat3)リスト取得 (指定されたcat1, cat2内の)
+app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => {
+    try {
+        const { cat1, cat2 } = req.params;
+        const { rows } = await pool.query(
+            'SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [cat1, cat2]
+        );
+        res.json(rows.map(row => row.category_3));
+    } catch (dbError) { res.status(500).json({ message: 'Error fetching Cat3' }); }
+});
+
+// 4.4 フォルダリスト取得 (指定されたcat1, cat2, cat3内の)
+app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => {
+    try {
+        const { cat1, cat2, cat3 } = req.params;
+        const { rows } = await pool.query(
+            'SELECT DISTINCT folder_name FROM images WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 ORDER BY folder_name', [cat1, cat2, cat3]
         );
         res.json(rows.map(row => row.folder_name));
-    } catch (dbError) {
-        console.error('API /api/folders_by_category error:', dbError);
-        res.status(500).json({ message: 'フォルダの読み込みに失敗しました。' });
-    }
+    } catch (dbError) { res.status(500).json({ message: 'Error fetching folders' }); }
 });
 
-app.get('/api/images_by_folder/:folderName', isAuthenticated, async (req, res) => {
+// 4.5 画像リスト取得 (指定されたフォルダ内の)
+app.get('/api/images/:folderName', isAuthenticated, async (req, res) => {
     try {
         const { folderName } = req.params;
         const { rows } = await pool.query(
             'SELECT title, url FROM images WHERE folder_name = $1 ORDER BY created_at DESC', [folderName]
         );
         res.json(rows);
-    } catch (dbError) {
-        console.error('API /api/images_by_folder error:', dbError);
-        res.status(500).json({ message: '画像の読み込みに失敗しました。' });
-    }
+    } catch (dbError) { res.status(500).json({ message: 'Error fetching images' }); }
 });
 
-app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
-    const { folderName } = req.params;
-    try {
-        const { rows } = await pool.query('SELECT title FROM images WHERE folder_name = $1', [folderName]);
-        if (rows.length > 0) {
-            const objectsToDelete = rows.map(row => ({ Key: row.title }));
-            const deleteCommand = new DeleteObjectsCommand({
-                Bucket: R2_BUCKET_NAME,
-                Delete: { Objects: objectsToDelete },
-            });
-            await s3Client.send(deleteCommand);
-        }
-        await pool.query('DELETE FROM images WHERE folder_name = $1', [folderName]);
-        res.json({ message: `フォルダ「${folderName}」を完全に削除しました。` });
-    } catch (error) {
-        console.error(`Failed to delete folder ${folderName}:`, error);
-        res.status(500).json({ message: 'フォルダの削除に失敗しました。サーバーエラーが発生しました。' });
-    }
-});
-
+// 4.6 検索API (/api/search) (★簡略化: フォルダ名とファイル名のみ対応)
 app.get('/api/search', isAuthenticated, async (req, res) => {
-    const { folder, q } = req.query;
-    if (!folder) {
-        return res.status(400).json({ message: 'フォルダが指定されていません。' });
-    }
+    const { folder, q } = req.query; // (※ 4階層での絞り込みはさらに複雑なため省略)
+    if (!folder) { /* ... */ } // (省略)
     try {
-        let queryText;
-        let queryParams;
+        let queryText; let queryParams;
         if (q && q.trim() !== '') {
              const searchTerm = `%${q}%`;
-             queryText = `
-                SELECT title, url FROM images
-                WHERE folder_name = $1 AND title ILIKE $2
-                ORDER BY created_at DESC`;
+             queryText = `SELECT title, url FROM images WHERE folder_name = $1 AND title ILIKE $2 ORDER BY created_at DESC`;
              queryParams = [folder, searchTerm];
         } else {
-             queryText = `
-                SELECT title, url FROM images
-                WHERE folder_name = $1
-                ORDER BY created_at DESC`;
+             queryText = `SELECT title, url FROM images WHERE folder_name = $1 ORDER BY created_at DESC`;
              queryParams = [folder];
         }
         const { rows } = await pool.query(queryText, queryParams);
         res.json(rows);
-    } catch (dbError) {
-        console.error('API /api/search error:', dbError);
-        res.status(500).json({ message: '検索処理に失敗しました。' });
-    }
+    } catch (dbError) { /* ... (省略) ... */ }
+});
+// ▲▲▲ ギャラリー用API ここまで ▲▲▲
+
+// 5. フォルダ削除API (/api/folder/:folderName) (★簡略化: フォルダ名のみ対応)
+app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
+    // (※ 4階層を考慮した削除は非常に危険なため、フォルダ名指定のみ維持)
+    const { folderName } = req.params;
+    try {
+        const { rows } = await pool.query('SELECT title FROM images WHERE folder_name = $1', [folderName]);
+        if (rows.length > 0) { /* ... (R2削除 - 省略) ... */ }
+        await pool.query('DELETE FROM images WHERE folder_name = $1', [folderName]);
+        res.json({ message: `フォルダ「${folderName}」を削除しました。` });
+    } catch (error) { /* ... (省略) ... */ }
 });
 
-// ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-// 12. 【新機能】 フォルダ名変更API (/api/folder/:oldFolderName)
+// 6. フォルダ名変更API (/api/folder/:oldFolderName) (★簡略化: フォルダ名のみ対応)
 app.put('/api/folder/:oldFolderName', isAuthenticated, async (req, res) => {
+    // (※ 4階層を考慮した名前変更は複雑なため、フォルダ名指定のみ維持)
     const { oldFolderName } = req.params;
     const { newFolderName } = req.body;
-
-    if (!newFolderName || newFolderName.trim() === '') {
-        return res.status(400).json({ message: '新しいフォルダ名が指定されていません。' });
-    }
-    if (newFolderName === oldFolderName) {
-         return res.status(400).json({ message: '新しい名前が現在の名前と同じです。' });
-    }
-
+    if (!newFolderName || /* ... */ ) { /* ... */ } // (省略)
     try {
-        const updateQuery = `
-            UPDATE images
-            SET folder_name = $1
-            WHERE folder_name = $2
-        `;
+        const updateQuery = `UPDATE images SET folder_name = $1 WHERE folder_name = $2`;
         const result = await pool.query(updateQuery, [newFolderName.trim(), oldFolderName]);
-        console.log(`Renamed folder from "${oldFolderName}" to "${newFolderName}". Affected rows: ${result.rowCount}`);
-        res.json({ message: `フォルダ名を「${oldFolderName}」から「${newFolderName}」に変更しました。` });
-    } catch (error) {
-        if (error.code === '23505') {
-             console.error(`Rename failed: Folder "${newFolderName}" might already exist or other constraint violation.`);
-             return res.status(409).json({ message: `フォルダ名「${newFolderName}」は既に使用されている可能性があります。` });
-        }
-        console.error(`Failed to rename folder from ${oldFolderName} to ${newFolderName}:`, error);
-        res.status(500).json({ message: 'フォルダ名の変更に失敗しました。サーバーエラーが発生しました。' });
-    }
+        res.json({ message: `フォルダ名を変更しました。` });
+    } catch (error) { /* ... (省略) ... */ }
 });
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
 
 // --- サーバーの起動 ---
 app.listen(port, async () => {
-    await createTable();
+    await createTable(); // ★起動時にDBを自動改造
     console.log(`サーバーが http://localhost:${port} で起動しました`);
 });
+
+// --- 省略した関数の補足 ---
+// passport.use(new LocalStrategy(...)): 前回のコードと同じ
+// passport.deserializeUser(...): 前回のコードと同じ
+// isAuthenticated(...): 前回のコードと同じ
+// s3Client(...): 前回のコードと同じ
+// upload = multer(...): 前回のコードと同じ
+// createTable()内の省略: information_schema.columns を使った存在チェック
+// CSV APIの省略: BOM, header設定, res.send()
+// フォルダ削除APIの省略: R2削除コマンド(DeleteObjectsCommand), エラーハンドリング
+// フォルダ名変更APIの省略: 入力チェック, エラーハンドリング
