@@ -320,46 +320,6 @@ app.delete('/api/folder/:folderName', isAuthenticated, async (req, res) => {
     }
 });
 
-
-// ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-// 11. 【★初回セットアップ用★】 管理者ユーザーを作成する
-// このコードは、ユーザー作成後に必ず削除してください！
-
-// ★★★★★ 修正点1: `isAuthenticated,` を削除 ★★★★★
-app.get('/setup-admin-user', async (req, res) => {
-    
-    // ★★★★★ 修正点2: あなたのユーザー名とパスワードに書き換える ★★★★★
-    const username = 'onicard8580'; // (例: 'onicard')
-    const password = 'Yonicard2580Core2580image'; // (例: 'OniCard-Pass-2025!')
-
-    try {
-        // pgcrypto拡張を有効化
-        await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
-        
-        // パスワードをハッシュ化してDBに保存
-        // (bcryptjs を使って Node 側でハッシュ化)
-        const salt = await bcrypt.genSalt(10);
-        const password_hash = await bcrypt.hash(password, salt);
-
-        // ユーザーをDBに挿入
-        await pool.query(
-            'INSERT INTO users (username, password_hash) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING;',
-            [username, password_hash]
-        );
-
-        res.status(200).send(
-            `<h1>セットアップ成功</h1>` +
-            `<p>ユーザー名「${username}」でアカウントを作成（または確認）しました。</p>` +
-            `<p><b>【最重要】</b>今すぐ server.js から /setup-admin-user のコードを削除し、git push してください！</p>` +
-            `<a href="/">ログインページに戻る</a>`
-        );
-    } catch (err) {
-        console.error('管理者ユーザーの作成に失敗:', err);
-        res.status(500).send('管理者ユーザーの作成に失敗しました。');
-    }
-});
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-
 // --- サーバーの起動 (★重複を削除し、1回だけにする) ---
 app.listen(port, async () => {
     await createTable(); 
