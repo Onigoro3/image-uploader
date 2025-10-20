@@ -189,13 +189,11 @@
                 const images = await response.json(); galleryContainer.innerHTML = '';
                 if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
                 else {
-                    // 移動機能は削除したので allCat1 の取得は不要
                     images.forEach(imgData => {
                         const itemContainer = document.createElement('div'); itemContainer.className = 'image-item';
                         const img = document.createElement('img'); img.className='gallery-image'; img.src=imgData.url; img.alt=imgData.title; img.title=imgData.title;
                         itemContainer.appendChild(img);
                         galleryContainer.appendChild(itemContainer);
-                        // 移動コントロールの生成は削除
                     });
                 }
                 csvButton.href = `/download-csv?folder=${encodedFolderName}`; csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;
