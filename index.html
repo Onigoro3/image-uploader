@@ -35,7 +35,6 @@
         #dropZone.drag-over { background-color: #e9ecef; border-color: #007bff; }
         #fileInfo { margin-top: 10px; font-style: italic; }
     </style>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" integrity="sha512-FaAQujRxLMvw+BkmGN3w7u9EdQQr1t0vQoY8KDh09+6SFaWSTe+KrT8oCWg25X91hytm5c5BTmiSGQejkraaZg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
 </head>
 <body>
 
@@ -90,7 +89,7 @@
         const sortBySelect = document.getElementById('sortBy');
         const sortOrderSelect = document.getElementById('sortOrder');
         let selections = { cat1: null, cat2: null, cat3: null, folder: null };
-        let lightbox; // Lightbox instance
+        let lightbox;
 
         // --- ドラッグ＆ドロップ イベントリスナー ---
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
@@ -187,11 +186,10 @@
 
         // UIリセット関数
         function resetUI(startLevel) { if (startLevel <= 1) { selections.cat1 = null; cat2Container.innerHTML = '<h4>中カテゴリ</h4>'; } if (startLevel <= 2) { selections.cat2 = null; cat3Container.innerHTML = '<h4>小カテゴリ</h4>'; } if (startLevel <= 3) { selections.cat3 = null; folderContainer.innerHTML = '<h4>フォルダ</h4>'; } if (startLevel <= 4) { selections.folder = null; galleryContainer.innerHTML = ''; searchSection.style.display = 'none'; searchInput.value = ''; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; analyzeStatus.innerText = ''; } }
-
         // 画像読み込みトリガー
         async function loadImages(folderName) { selections.folder = folderName; searchInput.value = ''; searchSection.style.display = 'flex'; const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(folderName, '', sortBy, sortOrder); }
         // 検索イベントリスナー
-        let searchTimeout; searchInput.addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, input.value.trim(), sortBy, sortOrder); } }, 300); });
+        let searchTimeout; searchInput.addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }, 300); });
         // 並び替えイベントリスナー
         function setupSortListeners() { sortBySelect.addEventListener('change', handleSortChange); sortOrderSelect.addEventListener('change', handleSortChange); }
         async function handleSortChange() { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }
@@ -262,8 +260,6 @@
                 analyzeStatus.innerText = `「${folderName}」解析CSV完了`; analyzeStatus.style.color = 'green';
             } catch (error) { console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; analyzeStatus.style.color = 'red'; }
         }
-        // 画像移動関数 (削除済み)
-        // async function moveImage(...) { ... }
     </script>
 </body>
 </html>
