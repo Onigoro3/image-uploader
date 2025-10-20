@@ -124,26 +124,47 @@ app.get('/logout', (req, res, next) => { req.logout((err) => { if (err) { return
 
 // --- ログイン必須ルート ---
 app.get('/', isAuthenticated, (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
-app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => { const { category1, category2, category3, folderName } = req.body; if (!category1 || !category2 || !category3 || !folderName ) { return res.status(400).json({ message: '全カテゴリ・フォルダ名必須' }); } if (req.files && req.files.length > 0) { try { const p = req.files.map(f => { const u = `${r2PublicUrl}/${encodeURIComponent(f.key)}`; const t = f.key; return pool.query( `INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) VALUES ($1, $2, $3, $4, $5, $6)`, [t, u, category1.trim(), category2.trim(), category3.trim(), folderName.trim()] ); }); await Promise.all(p); res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件保存` }); } catch (e) { console.error('DB Insert Err:', e); res.status(500).json({ message: 'DB保存失敗' }); } } else { res.status(400).json({ message: 'ファイル未選択' }); } });
-app.get('/download-csv', isAuthenticated, async (req, res) => { try { const { folder } = req.query; let qT; let qP; if (folder) { qT = 'SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ORDER BY created_at DESC'; qP = [decodeURIComponent(folder)]; } else { qT = 'SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, created_at DESC'; qP = []; } const { rows } = await pool.query(qT, qP); if (rows.length === 0) { return res.status(404).send('対象履歴なし'); } let csv = "大カテゴリ,中カテゴリ,小カテゴリ,フォルダ名,題名,URL\n"; rows.forEach(i => { const c1=`"${(i.category_1||'').replace(/"/g,'""')}"`; const c2=`"${(i.category_2||'').replace(/"/g,'""')}"`; const c3=`"${(i.category_3||'').replace(/"/g,'""')}"`; const f=`"${(i.folder_name||'').replace(/"/g,'""')}"`; const t=`"${i.title.replace(/"/g,'""')}"`; const u=`"${i.url.replace(/"/g,'""')}"`; csv += `${c1},${c2},${c3},${f},${t},${u}\n`; }); const fN = folder ? `list_${decodeURIComponent(folder)}.csv` : 'list_all.csv'; const bom = '\uFEFF'; res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fN)}`); res.status(200).send(bom + csv); } catch (e) { console.error('CSV Err:', e); res.status(500).send('CSV生成失敗'); } });
+
+// アップロードAPI (/upload)
+app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
+    const { category1, category2, category3, folderName } = req.body;
+    if (!category1 || !category2 || !category3 || !folderName ) { return res.status(400).json({ message: '全カテゴリ・フォルダ名必須' }); }
+    if (req.files && req.files.length > 0) {
+        try {
+            const insertPromises = req.files.map(file => { const fileUrl = `${r2PublicUrl}/${encodeURIComponent(file.key)}`; const title = file.key; return pool.query( `INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) VALUES ($1, $2, $3, $4, $5, $6)`, [title, fileUrl, category1.trim(), category2.trim(), category3.trim(), folderName.trim()] ); });
+            await Promise.all(insertPromises); res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件保存` });
+        } catch (dbError) { console.error('DB Insert Error:', dbError); res.status(500).json({ message: 'DB保存失敗' }); }
+    } else { res.status(400).json({ message: 'ファイル未選択' }); }
+});
+
+// ▼▼▼ CSV API (/download-csv) (★題名の拡張子削除を追加) ▼▼▼
+app.get('/download-csv', isAuthenticated, async (req, res) => {
+    try {
+        const { folder } = req.query; let queryText; let queryParams;
+        if (folder) { queryText = 'SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ORDER BY created_at DESC'; queryParams = [decodeURIComponent(folder)]; }
+        else { queryText = 'SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, created_at DESC'; queryParams = []; }
+        const { rows } = await pool.query(queryText, queryParams); if (rows.length === 0) { return res.status(404).send('対象履歴なし'); }
+        let csvContent = "大カテゴリ,中カテゴリ,小カテゴリ,フォルダ名,題名,URL\n"; // Header
+        rows.forEach(item => {
+            const c1=`"${(item.category_1||'').replace(/"/g,'""')}"`;
+            const c2=`"${(item.category_2||'').replace(/"/g,'""')}"`;
+            const c3=`"${(item.category_3||'').replace(/"/g,'""')}"`;
+            const f=`"${(item.folder_name||'').replace(/"/g,'""')}"`;
+            // ★ item.title から最後の '.' 以降 (拡張子) を削除
+            const titleWithoutExtension = item.title.substring(0, item.title.lastIndexOf('.')) || item.title;
+            const t = `"${titleWithoutExtension.replace(/"/g, '""')}"`;
+            const u=`"${item.url.replace(/"/g,'""')}"`; // URLは変更なし
+            csvContent += `${c1},${c2},${c3},${f},${t},${u}\n`;
+        });
+        const fileName = folder ? `list_${decodeURIComponent(folder)}.csv` : 'list_all.csv'; const bom = '\uFEFF';
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+        res.status(200).send(bom + csvContent);
+    } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
+});
+// ▲▲▲ CSV API ここまで ▲▲▲
 
 // --- ギャラリー用API ---
-// ▼▼▼ /api/cat1 を一時的にダミーデータに書き換え ▼▼▼
-app.get('/api/cat1', isAuthenticated, async (req, res) => {
-    try {
-        console.log("[DEBUG] /api/cat1 requested. Sending dummy data.");
-        // 本来のDBクエリをコメントアウト
-        // const { rows } = await pool.query('SELECT DISTINCT category_1 FROM images ORDER BY category_1');
-        // res.json(rows.map(r => r.category_1));
-
-        // 代わりにダミーデータを返す
-        res.json(['テストカテゴリA', 'テストカテゴリB', 'default_cat1']);
-    } catch (e) {
-        console.error("API /api/cat1 error:", e);
-        res.status(500).json({ message: 'Error fetching cat1' });
-    }
-});
-// ▲▲▲ テストコードここまで ▲▲▲
+app.get('/api/cat1', isAuthenticated, async (req, res) => { try { const { rows } = await pool.query('SELECT DISTINCT category_1 FROM images ORDER BY category_1'); res.json(rows.map(r => r.category_1)); } catch (e) { console.error("API /api/cat1 error:", e); res.status(500).json({ message: 'Error fetching cat1' }); } });
 app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { try { const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1 = $1 ORDER BY category_2', [req.params.cat1]); res.json(rows.map(r => r.category_2)); } catch (e) { console.error("API /api/cat2 error:", e); res.status(500).json({ message: 'Error fetching cat2' }); } });
 app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { try { const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); res.json(rows.map(r => r.category_3)); } catch (e) { console.error("API /api/cat3 error:", e); res.status(500).json({ message: 'Error fetching cat3' }); } });
 app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { try { const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 ORDER BY folder_name', [req.params.cat1, req.params.cat2, req.params.cat3]); res.json(rows.map(r => r.folder_name)); } catch (e) { console.error("API /api/folders error:", e); res.status(500).json({ message: 'Error fetching folders' }); } });
