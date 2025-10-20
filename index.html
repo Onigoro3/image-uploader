@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <title>画像アップローダー (全機能)</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" integrity="sha512-FaAQujRxLMvw+BkmGN3w7u9EdQQr1t0vQoY8KDh09+6SFaWSTe+KrT8oCWg25X91hytm5c5BTmiSGQejkraaZg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
         body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
         hr { margin: 2em 0; }
@@ -71,6 +70,7 @@
     <div id="image-gallery-container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js" integrity="sha512-/4kQE5RJQYHRhUiK+CZS8UhaJTnLmQkDuf8lOhiP2xLdjthA/rm0VqqWjcyelIx+NDyNHFmtqvuIgOFQnI34WA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
     <script>
         // --- HTML要素を取得 ---
         const fileInput = document.getElementById('imageInput');
@@ -119,11 +119,36 @@
         // --- ギャラリー機能 ---
         document.addEventListener('DOMContentLoaded', () => { loadCat1(); setupSelectListeners(); setupSortListeners(); });
 
-        // Select要素関連
-        function populateSelect(selectElement, items, currentSelection) { selectElement.innerHTML = '<option value="">--- 選択 ---</option>'; items.forEach(item => { const option = document.createElement('option'); option.value = item; option.text = item; if (item === currentSelection) option.selected = true; selectElement.appendChild(option); }); const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption); }
-        function setupSelectListeners() { cat1Select.addEventListener('change', () => handleSelectChange(cat1Select, cat1NewInput, 1)); cat2Select.addEventListener('change', () => handleSelectChange(cat2Select, cat2NewInput, 2)); cat3Select.addEventListener('change', () => handleSelectChange(cat3Select, cat3NewInput, 3)); }
-        function handleSelectChange(selectElement, newInputElement, level) { const value = selectElement.value; if (value === '_new_') { newInputElement.style.display = 'block'; newInputElement.focus(); if (level === 1) { resetUploadUI(2, true); resetUploadUI(3, true); } if (level === 2) { resetUploadUI(3, true); } } else { newInputElement.style.display = 'none'; newInputElement.value = ''; if (level === 1 && value) { loadCat2Options(value); resetUploadUI(3); } if (level === 2 && value && cat1Select.value && cat1Select.value !== '_new_') { loadCat3Options(cat1Select.value, value); } } }
-        function resetUploadUI(startLevel, createOnly = false){ if (startLevel <= 2) { resetAndAddCreateOption(cat2Select); cat2NewInput.style.display='none'; cat2NewInput.value=''; } if (startLevel <= 3) { resetAndAddCreateOption(cat3Select); cat3NewInput.style.display='none'; cat3NewInput.value=''; } }
+        // Select要素の選択肢生成
+        function populateSelect(selectElement, items, currentSelection) {
+            selectElement.innerHTML = '<option value="">--- 選択 ---</option>';
+            items.forEach(item => { const option = document.createElement('option'); option.value = item; option.text = item; if (item === currentSelection) option.selected = true; selectElement.appendChild(option); });
+            const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption);
+        }
+        // Select変更イベント設定
+        function setupSelectListeners() {
+            cat1Select.addEventListener('change', () => handleSelectChange(cat1Select, cat1NewInput, 1));
+            cat2Select.addEventListener('change', () => handleSelectChange(cat2Select, cat2NewInput, 2));
+            cat3Select.addEventListener('change', () => handleSelectChange(cat3Select, cat3NewInput, 3));
+        }
+        // Select変更共通処理
+        function handleSelectChange(selectElement, newInputElement, level) {
+            const value = selectElement.value;
+            if (value === '_new_') {
+                newInputElement.style.display = 'block'; newInputElement.focus();
+                if (level === 1) { resetUploadUI(2, true); resetUploadUI(3, true); } if (level === 2) { resetUploadUI(3, true); }
+            } else {
+                newInputElement.style.display = 'none'; newInputElement.value = '';
+                if (level === 1 && value) { loadCat2Options(value); resetUploadUI(3); }
+                if (level === 2 && value && cat1Select.value && cat1Select.value !== '_new_') { loadCat3Options(cat1Select.value, value); }
+            }
+        }
+        // アップロードUIリセット
+        function resetUploadUI(startLevel, createOnly = false){
+             if (startLevel <= 2) { resetAndAddCreateOption(cat2Select); cat2NewInput.style.display='none'; cat2NewInput.value=''; }
+             if (startLevel <= 3) { resetAndAddCreateOption(cat3Select); cat3NewInput.style.display='none'; cat3NewInput.value=''; }
+        }
+        // Selectをリセットして「新規作成」だけを追加
         function resetAndAddCreateOption(selectElement) { selectElement.innerHTML = '<option value="">---</option>'; const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption); }
 
         // --- 階層リスト読み込み ---
@@ -161,23 +186,22 @@
 
         // UIリセット関数
         function resetUI(startLevel) { if (startLevel <= 1) { selections.cat1 = null; cat2Container.innerHTML = '<h4>中カテゴリ</h4>'; } if (startLevel <= 2) { selections.cat2 = null; cat3Container.innerHTML = '<h4>小カテゴリ</h4>'; } if (startLevel <= 3) { selections.cat3 = null; folderContainer.innerHTML = '<h4>フォルダ</h4>'; } if (startLevel <= 4) { selections.folder = null; galleryContainer.innerHTML = ''; searchSection.style.display = 'none'; searchInput.value = ''; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; analyzeStatus.innerText = ''; } }
-
-        // 画像読み込みトリガー (並び替えも考慮)
+        // 画像読み込みトリガー
         async function loadImages(folderName) { selections.folder = folderName; searchInput.value = ''; searchSection.style.display = 'flex'; const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(folderName, '', sortBy, sortOrder); }
-        // 検索イベントリスナー (並び替えも考慮)
+        // 検索イベントリスナー
         let searchTimeout; searchInput.addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }, 300); });
         // 並び替えイベントリスナー
         function setupSortListeners() { sortBySelect.addEventListener('change', handleSortChange); sortOrderSelect.addEventListener('change', handleSortChange); }
         async function handleSortChange() { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }
 
-        // 画像取得・表示関数 (ライトボックス対応 & 並び替え)
+        // 画像取得・表示関数
         async function displayImages(folderName, searchTerm, sortBy = 'created_at', sortOrder = 'DESC') {
             try {
-                if (lightbox) { lightbox.destroy(); lightbox = null; } // Destroy previous lightbox instance
+                if (lightbox) { lightbox.destroy(); lightbox = null; }
                 galleryContainer.innerHTML = '<p>読込中...</p>'; const encodedFolderName = encodeURIComponent(folderName);
                 let apiUrl; const sortParams = `&sort=${sortBy}&order=${sortOrder}`;
                 if (searchTerm) { apiUrl = `/api/search?folder=${encodedFolderName}&q=${encodeURIComponent(searchTerm)}${sortParams}`; }
-                else { apiUrl = `/api/images/${encodedFolderName}?sort=${sortBy}&order=${sortOrder}`; } // Corrected API endpoint for images
+                else { apiUrl = `/api/images/${encodedFolderName}?sort=${sortBy}&order=${sortOrder}`; }
                 const response = await fetch(apiUrl); if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const images = await response.json(); galleryContainer.innerHTML = '';
                 if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
@@ -188,7 +212,6 @@
                         const img = document.createElement('img'); img.className='gallery-image'; img.src=imgData.url; img.alt=imgData.title; img.title=imgData.title;
                         link.appendChild(img); itemContainer.appendChild(link); galleryContainer.appendChild(itemContainer);
                     });
-                    // Initialize SimpleLightbox AFTER images are added
                     lightbox = new SimpleLightbox('#image-gallery-container .image-item a');
                 }
                 csvButton.href = `/download-csv?folder=${encodedFolderName}`; csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;
@@ -237,7 +260,6 @@
                 analyzeStatus.innerText = `「${folderName}」解析CSV完了`; analyzeStatus.style.color = 'green';
             } catch (error) { console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; analyzeStatus.style.color = 'red'; }
         }
-        // 画像移動関数 (削除済み)
     </script>
 </body>
 </html>
