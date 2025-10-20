@@ -130,7 +130,6 @@ function isAuthenticated(req, res, next) {
     if (req.isAuthenticated()) { 
         return next(); 
     }
-    // 認証失敗時、/login にリダイレクト
     console.log('[Auth] Authentication failed. Redirecting to /login.'); 
     res.redirect('/login'); 
 }
@@ -150,6 +149,39 @@ app.get('/logout', (req, res, next) => {
         });
     }); 
 });
+
+// 11. 【★パスワード再設定用★】 管理者ユーザーを更新する (一時的に使用)
+app.get('/setup-admin-user', async (req, res) => { 
+    
+    // ★★★ あなたのユーザー名と「新しいパスワード」に書き換えてください ★★★
+    const username = 'onicard8580'; // (あなたのユーザー名)
+    const new_password = 'YOUR_NEW_PASSWORD_HERE'; // (★新しいパスワード！)
+
+    try {
+        await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
+        const salt = await bcrypt.genSalt(10);
+        const password_hash = await bcrypt.hash(new_password, salt);
+        const resetQuery = `
+            INSERT INTO users (username, password_hash) 
+            VALUES ($1, $2) 
+            ON CONFLICT (username) 
+            DO UPDATE SET password_hash = $2;
+        `;
+        
+        await pool.query(resetQuery, [username, password_hash]);
+
+        res.status(200).send(
+            `<h1>パスワードリセット完了</h1>` +
+            `<p>ユーザー名「${username}」のパスワードを上書きしました。新しいパスワードを覚えましたか？</p>` +
+            `<p><b>【最重要】</b>今すぐ server.js から /setup-admin-user のコードを削除し、git push してください！</p>` +
+            `<a href="/">ログインページに戻る</a>`
+        );
+    } catch (err) {
+        console.error('パスワードリセット失敗:', err);
+        res.status(500).send('パスワードリセット中にエラーが発生しました。');
+    }
+});
+
 
 // --- ログイン必須ルート ---
 app.get('/', isAuthenticated, (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
@@ -178,7 +210,7 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
 app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
         const { folder } = req.query; let queryText; let queryParams;
-        const orderByClause = 'ORDER BY length(title), title ASC'; // 自然順ソート
+        const orderByClause = 'ORDER BY length(title), title ASC';
 
         if (folder) { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ${orderByClause}`; queryParams = [decodeURIComponent(folder)]; }
         else { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, length(title), title ASC`; queryParams = []; }
@@ -190,7 +222,7 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
     } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
 });
 
-// --- ギャラリー用API (デバッグログ付き) ---
+// --- ギャラリー用API ---
 app.get('/api/cat1', isAuthenticated, async (req, res) => {
     try {
         console.log("[API] GET /api/cat1 received");
