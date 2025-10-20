@@ -4,7 +4,7 @@ const express = require('express');
 const path = require('path');
 const multer = require('multer');
 const multerS3 = require('multer-s3');
-const { S3Client, DeleteObjectsCommand } = require('@aws-sdk/client-s3'); // CopyObjectCommand, DeleteObjectCommandは不要
+const { S3Client, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
 const session = require('express-session');
 const passport = require('passport');
@@ -36,7 +36,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(session({
     store: new PgSession({ pool: pool, tableName: 'user_sessions' }),
-    secret: process.env.SESSION_SECRET || 'fallback_secret_set_in_env_variable',
+    secret: process.env.SESSION_SECRET || 'fallback_secret_set_in_env_variable', // ★必ず.envで設定
     resave: false,
     saveUninitialized: false,
     cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, secure: process.env.NODE_ENV === 'production', httpOnly: true, sameSite: 'lax' }
@@ -91,7 +91,7 @@ const createTable = async () => {
         `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2 ON images (category_1, category_2);`,
         `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2_cat3 ON images (category_1, category_2, category_3);`,
         `CREATE INDEX IF NOT EXISTS idx_images_folder_name ON images (folder_name);`,
-        `CREATE INDEX IF NOT EXISTS idx_images_title_length_and_title ON images (length(title), title);` // ★ CSV高速化用の索引
+        `CREATE INDEX IF NOT EXISTS idx_images_title_length_and_title ON images (length(title), title);`
     ];
     try {
         await pool.query(userQuery); await pool.query(sessionQuery); await pool.query(createQuery);
@@ -117,7 +117,6 @@ const upload = multer({
     storage: multerS3({
         s3: s3Client, bucket: R2_BUCKET_NAME, acl: 'public-read',
         key: function (req, file, cb) {
-            // ★ 元のファイル名をそのままキーとして使用
             const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
             cb(null, originalName); // 元のファイル名でアップロード
         },
@@ -141,7 +140,7 @@ app.get('/logout', (req, res, next) => { req.logout((err) => { if (err) { return
 // --- ログイン必須ルート ---
 app.get('/', isAuthenticated, (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
 
-// ▼▼▼ アップロードAPI (/upload) (★元のファイル名でそのまま保存) ▼▼▼
+// アップロードAPI (/upload)
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
     const { category1, category2, category3, folderName } = req.body;
     if (!category1 || !category2 || !category3 || !folderName ) { return res.status(400).json({ message: '全カテゴリ・フォルダ名必須' }); }
@@ -160,65 +159,22 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
         res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${processedFiles.length} 件を元のファイル名で保存しました。` });
     } catch (error) { console.error('[Upload V3] Error during processing:', error); res.status(500).json({ message: 'ファイル処理エラー' }); }
 });
-// ▲▲▲ アップロードAPI ここまで ▲▲▲
 
-// ▼▼▼ CSV API (/download-csv) (★自然順ソート適用) ▼▼▼
+// CSV API (/download-csv)
 app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
-        const { folder } = req.query; 
-        let queryText; 
-        let queryParams;
-
-        // ★★★ 自然順ソートロジックを適用 ★★★
-        const orderByClause = 'ORDER BY length(title), title ASC';
-
-        if (folder) {
-            queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ${orderByClause}`;
-            queryParams = [decodeURIComponent(folder)];
-        } else {
-            queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, length(title), title ASC`;
-            queryParams = [];
-        }
-        
-        const { rows } = await pool.query(queryText, queryParams); 
-        if (rows.length === 0) { return res.status(404).send('対象履歴なし'); }
+        const { folder } = req.query; let queryText; let queryParams;
+        if (folder) { queryText = 'SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ORDER BY length(title), title ASC'; queryParams = [decodeURIComponent(folder)]; }
+        else { queryText = 'SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, length(title), title ASC'; queryParams = []; }
+        const { rows } = await pool.query(queryText, queryParams); if (rows.length === 0) { return res.status(404).send('対象履歴なし'); }
         let csvContent = "大カテゴリ,中カテゴリ,小カテゴリ,フォルダ名,題名,URL\n";
-        rows.forEach(item => { 
-            const c1=`"${(item.category_1||'').replace(/"/g,'""')}"`; 
-            const c2=`"${(item.category_2||'').replace(/"/g,'""')}"`; 
-            const c3=`"${(item.category_3||'').replace(/"/g,'""')}"`; 
-            const f=`"${(item.folder_name||'').replace(/"/g,'""')}"`; 
-            const titleWithoutExtension = item.title.substring(0, item.title.lastIndexOf('.')) || item.title; 
-            const t = `"${titleWithoutExtension.replace(/"/g, '""')}"`; 
-            const u=`"${item.url.replace(/"/g,'""')}"`; 
-            csvContent += `${c1},${c2},${c3},${f},${t},${u}\n`; 
-        });
-        const fileName = folder ? `list_${decodeURIComponent(folder)}.csv` : 'list_all.csv'; 
-        const bom = '\uFEFF'; 
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8'); 
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`); 
-        res.status(200).send(bom + csvContent);
-    } catch (dbError) { 
-        console.error('CSV Error:', dbError); 
-        res.status(500).send('CSV生成失敗'); 
-    }
+        rows.forEach(item => { const c1=`"${(item.category_1||'').replace(/"/g,'""')}"`; const c2=`"${(item.category_2||'').replace(/"/g,'""')}"`; const c3=`"${(item.category_3||'').replace(/"/g,'""')}"`; const f=`"${(item.folder_name||'').replace(/"/g,'""')}"`; const titleWithoutExtension = item.title.substring(0, item.title.lastIndexOf('.')) || item.title; const t = `"${titleWithoutExtension.replace(/"/g, '""')}"`; const u=`"${item.url.replace(/"/g,'""')}"`; csvContent += `${c1},${c2},${c3},${f},${t},${u}\n`; });
+        const fileName = folder ? `list_${decodeURIComponent(folder)}.csv` : 'list_all.csv'; const bom = '\uFEFF'; res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`); res.status(200).send(bom + csvContent);
+    } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
 });
-// ▲▲▲ CSV API ここまで ▲▲▲
 
 // --- ギャラリー用API (デバッグログ付き) ---
-// ★ /api/cat1 を「本番コード」に戻す
-app.get('/api/cat1', isAuthenticated, async (req, res) => {
-    try {
-        console.log("[API] GET /api/cat1 received");
-        const query = 'SELECT DISTINCT category_1 FROM images ORDER BY category_1';
-        const { rows } = await pool.query(query);
-        console.log(`[API] /api/cat1 found ${rows.length} items`);
-        res.json(rows.map(r => r.category_1));
-    } catch (e) {
-        console.error("!!!!! API /api/cat1 FAILED !!!!!", e);
-        res.status(500).json({ message: 'Error fetching cat1' });
-    }
-});
+app.get('/api/cat1', isAuthenticated, async (req, res) => { try { console.log("[API] GET /api/cat1 received"); const { rows } = await pool.query('SELECT DISTINCT category_1 FROM images ORDER BY category_1'); console.log(`[API] /api/cat1 found ${rows.length}`); res.json(rows.map(r => r.category_1)); } catch (e) { console.error("!!!!! API /api/cat1 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat1' }); } });
 app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat2/${req.params.cat1} received`); const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1 = $1 ORDER BY category_2', [req.params.cat1]); console.log(`[API] /api/cat2 found ${rows.length}`); res.json(rows.map(r => r.category_2)); } catch (e) { console.error("!!!!! API /api/cat2 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat2' }); } });
 app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat3/${req.params.cat1}/${req.params.cat2} received`); const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); console.log(`[API] /api/cat3 found ${rows.length}`); res.json(rows.map(r => r.category_3)); } catch (e) { console.error("!!!!! API /api/cat3 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat3' }); } });
 app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/folders received`); const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 ORDER BY folder_name', [req.params.cat1, req.params.cat2, req.params.cat3]); console.log(`[API] /api/folders found ${rows.length}`); res.json(rows.map(r => r.folder_name)); } catch (e) { console.error("!!!!! API /api/folders FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching folders' }); } });
