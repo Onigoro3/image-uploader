@@ -16,7 +16,7 @@
         .gallery-column { border: 1px solid #eee; padding: 10px; border-radius: 8px; background: #fafafa; min-height: 200px; max-height: 400px; overflow-y: auto; }
         .gallery-item { padding: 8px; border: 1px solid #ccc; border-radius: 5px; background-color: #f4f4f4; font-weight: bold; margin-bottom: 5px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
         .gallery-item.active { background-color: #007bff; color: white; border-color: #007bff; }
-        .gallery-item span { flex-grow: 1; margin-right: 5px; font-size: 14px; word-break: break-all; } /* Allow long names to wrap */
+        .gallery-item span { flex-grow: 1; margin-right: 5px; font-size: 14px; word-break: break-all; }
         .action-buttons { display: flex; gap: 3px; flex-shrink: 0; }
         .analyze-btn, .edit-btn, .delete-btn { border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-weight: bold; line-height: 20px; text-align: center; color: white; font-size: 12px; }
         .analyze-btn { background: #17a2b8; } .analyze-btn:hover { background: #138496; }
@@ -147,11 +147,11 @@
 
         // --- 階層リスト読み込み ---
         async function loadCat1() { resetUI(1); resetUploadUI(1); await loadList('/api/cat1', cat1Container, '大カテゴリ', (n) => { selections.cat1 = n; loadCat2(n); cat1Select.value = n; handleSelectChange(cat1Select, cat1NewInput, 1); }, true, 1); await loadCat1Options(); }
-        async function loadCat1Options(){ try { const r=await fetch('/api/cat1'); if(!r.ok) throw Error(); const i=await r.json(); populateSelect(cat1Select, i, selections.cat1); } catch(e){ console.error(e); cat1Select.innerHTML=''; } }
+        async function loadCat1Options(){ try { const r=await fetch('/api/cat1'); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat1Select, i, selections.cat1); } catch(e){ console.error("Cat1 opt err:", e); cat1Select.innerHTML='<option value="">失敗</option>'; } } // Add error option
         async function loadCat2(c1) { resetUI(2); resetUploadUI(2); await loadList(`/api/cat2/${encodeURIComponent(c1)}`, cat2Container, '中カテゴリ', (n) => { selections.cat2 = n; loadCat3(c1, n); cat2Select.value = n; handleSelectChange(cat2Select, cat2NewInput, 2); }, true, 2); await loadCat2Options(c1); }
-        async function loadCat2Options(c1){ try { const r=await fetch(`/api/cat2/${encodeURIComponent(c1)}`); if(!r.ok) throw Error(); const i=await r.json(); populateSelect(cat2Select, i, selections.cat2); } catch(e){ console.error(e); cat2Select.innerHTML=''; } }
+        async function loadCat2Options(c1){ try { const r=await fetch(`/api/cat2/${encodeURIComponent(c1)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat2Select, i, selections.cat2); } catch(e){ console.error("Cat2 opt err:", e); cat2Select.innerHTML=''; } }
         async function loadCat3(c1, c2) { resetUI(3); resetUploadUI(3); await loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`, cat3Container, '小カテゴリ', (n) => { selections.cat3 = n; loadFolders(c1, c2, n); cat3Select.value = n; handleSelectChange(cat3Select, cat3NewInput, 3); }, true, 3); await loadCat3Options(c1, c2); }
-        async function loadCat3Options(c1, c2){ try { const r=await fetch(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`); if(!r.ok) throw Error(); const i=await r.json(); populateSelect(cat3Select, i, selections.cat3); } catch(e){ console.error(e); cat3Select.innerHTML=''; } }
+        async function loadCat3Options(c1, c2){ try { const r=await fetch(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat3Select, i, selections.cat3); } catch(e){ console.error("Cat3 opt err:", e); cat3Select.innerHTML=''; } }
         async function loadFolders(c1, c2, c3) { resetUI(4); await loadList(`/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`, folderContainer, 'フォルダ', (n) => { selections.folder = n; loadImages(n); folderInput.value = n; }, true, 4); }
 
         // 汎用リスト読み込み関数
@@ -168,14 +168,9 @@
                     itemDiv.appendChild(nameSpan);
                     if (addActionButtons) {
                         const actionButtons = document.createElement('div'); actionButtons.className = 'action-buttons';
-                        if (level === 4) { // Only folders have analyze button
-                            const analyzeBtn = document.createElement('button'); analyzeBtn.className = 'analyze-btn'; analyzeBtn.innerText = 'A'; analyzeBtn.title = '解析CSV出力';
-                            analyzeBtn.addEventListener('click', (e) => { e.stopPropagation(); analyzeFolder(itemName); }); actionButtons.appendChild(analyzeBtn);
-                        }
-                        const editBtn = document.createElement('button'); editBtn.className = 'edit-btn'; editBtn.innerText = 'E'; editBtn.title = '名前変更';
-                        editBtn.addEventListener('click', (e) => { e.stopPropagation(); renameItem(itemName, level); });
-                        const deleteBtn = document.createElement('button'); deleteBtn.className = 'delete-btn'; deleteBtn.innerText = 'X'; deleteBtn.title = '削除';
-                        deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteItem(itemName, level); });
+                        if (level === 4) { const analyzeBtn = document.createElement('button'); analyzeBtn.className = 'analyze-btn'; analyzeBtn.innerText = 'A'; analyzeBtn.title = '解析CSV出力'; analyzeBtn.addEventListener('click', (e) => { e.stopPropagation(); analyzeFolder(itemName); }); actionButtons.appendChild(analyzeBtn); }
+                        const editBtn = document.createElement('button'); editBtn.className = 'edit-btn'; editBtn.innerText = 'E'; editBtn.title = '名前変更'; editBtn.addEventListener('click', (e) => { e.stopPropagation(); renameItem(itemName, level); });
+                        const deleteBtn = document.createElement('button'); deleteBtn.className = 'delete-btn'; deleteBtn.innerText = 'X'; deleteBtn.title = '削除'; deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteItem(itemName, level); });
                         actionButtons.appendChild(editBtn); actionButtons.appendChild(deleteBtn); itemDiv.appendChild(actionButtons);
                     }
                     container.appendChild(itemDiv);
@@ -198,7 +193,7 @@
                 const images = await response.json(); galleryContainer.innerHTML = '';
                 if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
                 else {
-                    const allCat1 = await fetch('/api/cat1').then(res => res.ok ? res.json() : []); // For move dropdown
+                    const allCat1 = await fetch('/api/cat1').then(res => res.ok ? res.json() : []);
                     images.forEach(imgData => {
                         const itemContainer = document.createElement('div'); itemContainer.className = 'image-item';
                         const img = document.createElement('img'); img.className='gallery-image'; img.src=imgData.url; img.alt=imgData.title; img.title=imgData.title; itemContainer.appendChild(img);
@@ -255,29 +250,23 @@
         async function analyzeFolder(folderName) {
             analyzeStatus.innerText = `「${folderName}」解析中...`; analyzeStatus.style.color = '#17a2b8';
             try {
-                const encodedFolderName = encodeURIComponent(folderName);
-                const response = await fetch(`/api/analyze/${encodedFolderName}`, { method: 'POST' });
-                if (!response.ok) { const e = await response.json().catch(()=>({})); throw new Error(e.message || `HTTP ${response.status}`); }
-                const blob = await response.blob(); const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a'); a.style.display = 'none'; a.href = url;
+                const encodedFolderName = encodeURIComponent(folderName); const response = await fetch(`/api/analyze/${encodedFolderName}`, { method: 'POST' });
+                if (!response.ok) { const e=await response.json().catch(()=>({})); throw new Error(e.message||`HTTP ${response.status}`); }
+                const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.style.display = 'none'; a.href = url;
                 const disposition = response.headers.get('Content-Disposition'); let filename = `analysis_${folderName}.csv`;
                 if (disposition && disposition.includes('attachment')) { const m = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition); if (m && m[1]) { filename = decodeURIComponent(m[1].replace(/['"]/g, '')); } }
                 a.download = filename; document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); a.remove();
-                analyzeStatus.innerText = `「${folderName}」解析CSVダウンロード完了`; analyzeStatus.style.color = 'green';
+                analyzeStatus.innerText = `「${folderName}」解析CSV完了`; analyzeStatus.style.color = 'green';
             } catch (error) { console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; analyzeStatus.style.color = 'red'; }
         }
         // 画像移動関数
         async function moveImage(imageTitle, newCat1, newCat2, newCat3, newFolder) {
             try {
-                statusP.style.color = 'blue'; statusP.innerText = `移動中...`;
-                const encodedImageTitle = encodeURIComponent(imageTitle);
-                const response = await fetch(`/api/image/${encodedImageTitle}`, {
-                    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ category1: newCat1, category2: newCat2, category3: newCat3, folderName: newFolder })
-                });
-                if (!response.ok) { const e = await response.json().catch(()=>({})); throw new Error(e.message || `HTTP ${response.status}`); }
+                statusP.style.color = 'blue'; statusP.innerText = `移動中...`; const encodedImageTitle = encodeURIComponent(imageTitle);
+                const response = await fetch(`/api/image/${encodedImageTitle}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category1: newCat1, category2: newCat2, category3: newCat3, folderName: newFolder }) });
+                if (!response.ok) { const e=await response.json().catch(()=>({})); throw new Error(e.message||`HTTP ${response.status}`); }
                 const data = await response.json(); statusP.innerText = data.message; statusP.style.color = 'green';
-                if(selections.folder) { await displayImages(selections.folder, searchInput.value.trim()); } // Refresh current view
+                if(selections.folder) { await displayImages(selections.folder, searchInput.value.trim()); }
             } catch (error) { console.error('画像移動エラー:', error); statusP.innerText = `移動失敗: ${error.message}`; statusP.style.color = 'red'; }
         }
     </script>
