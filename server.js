@@ -190,7 +190,7 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
     } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
 });
 
-// --- ギャラリー用API (デバッグログ付き) ---
+// --- ギャラリー用API ---
 app.get('/api/cat1', isAuthenticated, async (req, res) => {
     try {
         console.log("[API] GET /api/cat1 received");
