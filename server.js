@@ -15,7 +15,7 @@ const flash = require('connect-flash');
 const ejs = require('ejs');
 const { createWorker } = require('tesseract.js'); // OCR
 const sharp = require('sharp'); // 画像処理
-const https = require('https'); // 画像URL取得
+const https = require('https'); // 画像URL取得 (★ここで1回だけ読み込む)
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -66,45 +66,19 @@ passport.deserializeUser(async (id, done) => {
     } catch (err) { console.error('Deserialize Error:', err); done(err); }
 });
 
-// ▼▼▼ DBテーブル自動作成関数 (★SQL省略なし) ▼▼▼
+// --- DBテーブル自動作成関数 (4階層対応) ---
 const createTable = async () => {
-    // ユーザーテーブル
-    const userQuery = `
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username VARCHAR(50) UNIQUE NOT NULL,
-      password_hash VARCHAR(100) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );`;
-    // セッション保存用テーブル
-    const sessionQuery = `
-    CREATE TABLE IF NOT EXISTS "user_sessions" (
-      "sid" varchar NOT NULL COLLATE "default",
-      "sess" json NOT NULL,
-      "expire" timestamp(6) NOT NULL
-    ) WITH (OIDS=FALSE);
-    DO $$ BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint WHERE conname = 'user_sessions_pkey'
-        ) THEN
-            ALTER TABLE "user_sessions" ADD CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;
-        END IF;
-    END $$;
-    CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");
-    `;
-    // imagesテーブル作成クエリ (4階層)
+    const userQuery = `CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`;
+    const sessionQuery = `CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default","sess" json NOT NULL,"expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE); DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_sessions_pkey') THEN ALTER TABLE "user_sessions" ADD CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE; END IF; END $$; CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`;
     const createQuery = `
     CREATE TABLE IF NOT EXISTS images (
-      id SERIAL PRIMARY KEY,
-      title VARCHAR(255) NOT NULL,
-      url VARCHAR(1024) NOT NULL,
+      id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, url VARCHAR(1024) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       category_1 VARCHAR(100) DEFAULT 'default_cat1',
       category_2 VARCHAR(100) DEFAULT 'default_cat2',
       category_3 VARCHAR(100) DEFAULT 'default_cat3',
       folder_name VARCHAR(100) DEFAULT 'default_folder'
     );`;
-    // 既存テーブルにカラムがなければ追加するクエリ (4つ)
     const alterColumns = [
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_1') THEN ALTER TABLE images ADD COLUMN category_1 VARCHAR(100) DEFAULT 'default_cat1'; END IF; END $$;`,
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_2') THEN ALTER TABLE images ADD COLUMN category_2 VARCHAR(100) DEFAULT 'default_cat2'; END IF; END $$;`,
@@ -112,18 +86,11 @@ const createTable = async () => {
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='folder_name') THEN ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder'; END IF; END $$;`
     ];
     try {
-        await pool.query(userQuery);
-        await pool.query(sessionQuery);
-        await pool.query(createQuery);
-        for (const query of alterColumns) {
-            await pool.query(query);
-        }
+        await pool.query(userQuery); await pool.query(sessionQuery); await pool.query(createQuery);
+        for (const query of alterColumns) { await pool.query(query); }
         console.log('Database tables ready.');
-    } catch (err) {
-        console.error('DB init error:', err); // Log the specific SQL error if it happens
-    }
+    } catch (err) { console.error('DB init error:', err); }
 };
-// ▲▲▲ DBテーブル自動作成関数 ここまで ▲▲▲
 
 // --- ストレージ (R2) 接続 ---
 const r2Endpoint = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
@@ -226,10 +193,7 @@ app.put('/api/image/:imageTitle', isAuthenticated, async (req, res) => {
     } catch (error) { console.error(`Move Image Error:`, error); res.status(500).json({ message: '移動失敗' }); }
 });
 
-// --- 解析API (Tesseract.js 領域別OCR 版に戻す) ---
-const https = require('https'); // https を require
-const sharp = require('sharp'); // sharp を require
-
+// --- 解析API (Tesseract.js 領域別OCR 版) ---
 app.post('/api/analyze/:folderName', isAuthenticated, async (req, res) => {
     const { folderName } = req.params; console.log(`[Analyze Tesseract] Req: ${folderName}`); let worker;
     const getImageBuffer = (url) => new Promise((resolve, reject) => { https.get(url, (response) => { if (response.statusCode !== 200) return reject(new Error(`Status Code: ${response.statusCode}`)); const d = []; response.on('data', c => d.push(c)); response.on('end', () => resolve(Buffer.concat(d))); }).on('error', reject); });
