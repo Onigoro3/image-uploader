@@ -66,7 +66,7 @@ passport.deserializeUser(async (id, done) => {
     } catch (err) { console.error('Deserialize Error:', err); done(err); }
 });
 
-// --- DBテーブル自動作成関数 (4階層対応) ---
+// ▼▼▼ DBテーブル自動作成関数 (★索引(INDEX)追加) ▼▼▼
 const createTable = async () => {
     const userQuery = `CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`;
     const sessionQuery = `CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default","sess" json NOT NULL,"expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE); DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_sessions_pkey') THEN ALTER TABLE "user_sessions" ADD CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE; END IF; END $$; CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`;
@@ -85,12 +85,26 @@ const createTable = async () => {
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_3') THEN ALTER TABLE images ADD COLUMN category_3 VARCHAR(100) DEFAULT 'default_cat3'; END IF; END $$;`,
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='folder_name') THEN ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder'; END IF; END $$;`
     ];
+    
+    // ★★★ 索引(INDEX)を作成するクエリ ★★★
+    const createIndexes = [
+        `CREATE INDEX IF NOT EXISTS idx_images_cat1 ON images (category_1);`,
+        `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2 ON images (category_1, category_2);`,
+        `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2_cat3 ON images (category_1, category_2, category_3);`,
+        `CREATE INDEX IF NOT EXISTS idx_images_folder_name ON images (folder_name);`
+    ];
+
     try {
         await pool.query(userQuery); await pool.query(sessionQuery); await pool.query(createQuery);
         for (const query of alterColumns) { await pool.query(query); }
+        console.log('Database tables altered.');
+        // ★ 索引の作成を実行
+        for (const query of createIndexes) { await pool.query(query); }
+        console.log('Database indexes created.');
         console.log('Database tables ready.');
     } catch (err) { console.error('DB init error:', err); }
 };
+// ▲▲▲ DBテーブル自動作成関数 ここまで ▲▲▲
 
 // --- ストレージ (R2) 接続 ---
 const r2Endpoint = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
@@ -177,24 +191,22 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
     } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
 });
 
-// --- ギャラリー用API ---
-// ▼▼▼ /api/cat1 を一時的にダミーデータに書き換え ▼▼▼
+// --- ギャラリー用API (デバッグログ付き) ---
+// ▼▼▼ /api/cat1 を「本番コード」に戻す (索引で高速化されているはず) ▼▼▼
 app.get('/api/cat1', isAuthenticated, async (req, res) => {
     try {
-        console.log("[API-TEST] /api/cat1 received. Sending dummy data.");
-        // 本来のDBクエリをコメントアウト
-        // const { rows } = await pool.query('SELECT DISTINCT category_1 FROM images ORDER BY category_1');
-        // res.json(rows.map(r => r.category_1));
-
-        // 代わりにダミーデータを返す
-        res.json(['テストカテゴリA', 'テストカテゴリB', 'default_cat1']);
+        console.log("[API] GET /api/cat1 received");
+        const query = 'SELECT DISTINCT category_1 FROM images ORDER BY category_1';
+        console.log("[API] Executing query:", query);
+        const { rows } = await pool.query(query);
+        console.log(`[API] /api/cat1 found ${rows.length} items`);
+        res.json(rows.map(r => r.category_1));
     } catch (e) {
         console.error("!!!!! API /api/cat1 FAILED !!!!!", e);
         res.status(500).json({ message: 'Error fetching cat1' });
     }
 });
-// ▲▲▲ テストコードここまで ▲▲▲
-
+// ▲▲▲ /api/cat1 ここまで ▲▲▲
 app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat2/${req.params.cat1} received`); const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1 = $1 ORDER BY category_2', [req.params.cat1]); console.log(`[API] /api/cat2 found ${rows.length}`); res.json(rows.map(r => r.category_2)); } catch (e) { console.error("!!!!! API /api/cat2 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat2' }); } });
 app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat3/${req.params.cat1}/${req.params.cat2} received`); const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); console.log(`[API] /api/cat3 found ${rows.length}`); res.json(rows.map(r => r.category_3)); } catch (e) { console.error("!!!!! API /api/cat3 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat3' }); } });
 app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/folders received`); const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 ORDER BY folder_name', [req.params.cat1, req.params.cat2, req.params.cat3]); console.log(`[API] /api/folders found ${rows.length}`); res.json(rows.map(r => r.folder_name)); } catch (e) { console.error("!!!!! API /api/folders FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching folders' }); } });
