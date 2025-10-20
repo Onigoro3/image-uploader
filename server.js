@@ -4,7 +4,9 @@ const express = require('express');
 const path = require('path');
 const multer = require('multer');
 const multerS3 = require('multer-s3');
-const { S3Client, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
+// ▼▼▼ R2/S3のコピー・削除コマンドは不要なものを削除 ▼▼▼
+const { S3Client, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 const { Pool } = require('pg');
 const session = require('express-session');
 const passport = require('passport');
@@ -66,7 +68,7 @@ passport.deserializeUser(async (id, done) => {
     } catch (err) { console.error('Deserialize Error:', err); done(err); }
 });
 
-// ▼▼▼ DBテーブル自動作成関数 (★索引(INDEX)追加) ▼▼▼
+// --- DBテーブル自動作成関数 (4階層対応) ---
 const createTable = async () => {
     const userQuery = `CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`;
     const sessionQuery = `CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default","sess" json NOT NULL,"expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE); DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_sessions_pkey') THEN ALTER TABLE "user_sessions" ADD CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE; END IF; END $$; CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`;
@@ -85,26 +87,12 @@ const createTable = async () => {
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_3') THEN ALTER TABLE images ADD COLUMN category_3 VARCHAR(100) DEFAULT 'default_cat3'; END IF; END $$;`,
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='folder_name') THEN ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder'; END IF; END $$;`
     ];
-    
-    // ★★★ 索引(INDEX)を作成するクエリ ★★★
-    const createIndexes = [
-        `CREATE INDEX IF NOT EXISTS idx_images_cat1 ON images (category_1);`,
-        `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2 ON images (category_1, category_2);`,
-        `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2_cat3 ON images (category_1, category_2, category_3);`,
-        `CREATE INDEX IF NOT EXISTS idx_images_folder_name ON images (folder_name);`
-    ];
-
     try {
         await pool.query(userQuery); await pool.query(sessionQuery); await pool.query(createQuery);
         for (const query of alterColumns) { await pool.query(query); }
-        console.log('Database tables altered.');
-        // ★ 索引の作成を実行
-        for (const query of createIndexes) { await pool.query(query); }
-        console.log('Database indexes created.');
         console.log('Database tables ready.');
     } catch (err) { console.error('DB init error:', err); }
 };
-// ▲▲▲ DBテーブル自動作成関数 ここまで ▲▲▲
 
 // --- ストレージ (R2) 接続 ---
 const r2Endpoint = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
@@ -115,21 +103,23 @@ const s3Client = new S3Client({
     credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY },
 });
 
-// --- Multer (アップロード処理) 設定 (連番リネーム対応) ---
+// ▼▼▼ Multer (アップロード処理) 設定 (★元のファイル名で直接保存) ▼▼▼
 const upload = multer({
     storage: multerS3({
-        s3: s3Client, bucket: R2_BUCKET_NAME, acl: 'public-read',
+        s3: s3Client,
+        bucket: R2_BUCKET_NAME,
+        acl: 'public-read',
         key: function (req, file, cb) {
-            const uniqueSuffix = Date.now() + '_' + Math.round(Math.random() * 1E9);
-            const extension = path.extname(file.originalname);
-            const tempFilename = `temp_${uniqueSuffix}${extension}`;
-            console.log(`[Upload] Generating temp key: ${tempFilename}`);
-            cb(null, tempFilename);
+            // ★ 元のファイル名をそのままキーとして使用
+            const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+            console.log(`[Upload V3] Using original key: ${originalName}`);
+            cb(null, originalName); // 元のファイル名でアップロード
         },
         contentType: multerS3.AUTO_CONTENT_TYPE
     }),
     fileFilter: (req, file, cb) => { if (file.mimetype.startsWith('image/')) { cb(null, true); } else { cb(new Error('画像のみ'), false); } }
 });
+// ▲▲▲ Multer ここまで ▲▲▲
 
 // --- ログインチェック関数 ---
 function isAuthenticated(req, res, next) { if (req.isAuthenticated()) { return next(); } res.redirect('/login'); }
@@ -146,37 +136,48 @@ app.get('/logout', (req, res, next) => { req.logout((err) => { if (err) { return
 // --- ログイン必須ルート ---
 app.get('/', isAuthenticated, (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
 
-// アップロードAPI (/upload) (元のファイル名維持＋連番)
+// ▼▼▼ アップロードAPI (/upload) (★元のファイル名でそのまま保存) ▼▼▼
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
     const { category1, category2, category3, folderName } = req.body;
     if (!category1 || !category2 || !category3 || !folderName ) { return res.status(400).json({ message: '全カテゴリ・フォルダ名必須' }); }
     if (!req.files || req.files.length === 0) { return res.status(400).json({ message: 'ファイル未選択' }); }
-    console.log(`[Upload V2] Received ${req.files.length} files for ${category1}/${category2}/${category3}/${folderName}`);
-    const cat1Trimmed = category1.trim(); const cat2Trimmed = category2.trim(); const cat3Trimmed = category3.trim(); const folderNameTrimmed = folderName.trim();
-    const processedFiles = [];
+
+    console.log(`[Upload V3] Received ${req.files.length} files for ${category1}/${category2}/${category3}/${folderName}`);
+
+    const cat1Trimmed = category1.trim();
+    const cat2Trimmed = category2.trim();
+    const cat3Trimmed = category3.trim();
+    const folderNameTrimmed = folderName.trim();
+    
     try {
-        const getNextSequenceNumber = async (baseName, ext) => {
-            let highestNumber = 0; const likePattern = `${baseName}-%.${ext.substring(1)}`;
-            const countQuery = `SELECT title FROM images WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 AND folder_name = $4 AND title LIKE $5 ORDER BY title DESC LIMIT 1`;
-            const countResult = await pool.query(countQuery, [cat1Trimmed, cat2Trimmed, cat3Trimmed, folderNameTrimmed, likePattern]);
-            if (countResult.rows.length > 0) { const lastTitle = countResult.rows[0].title; const match = lastTitle.match(/-(\d+)\.[^.]+$/); if (match && match[1]) { highestNumber = parseInt(match[1], 10); } }
-            console.log(`[Upload V2] Highest number: ${highestNumber} for base: ${baseName}, ext: ${ext}`); return highestNumber + 1;
-        };
+        const insertPromises = [];
         for (const file of req.files) {
-            const tempKey = file.key; const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8'); const extension = path.extname(originalName).toLowerCase(); const baseNameOriginal = path.basename(originalName, extension);
-            let targetFilename; const numberMatch = baseNameOriginal.match(/^(.*)-(\d+)$/);
-            if (numberMatch) { targetFilename = originalName; console.log(`[Upload V2] Using original filename: ${targetFilename}`); }
-            else { const nextNumber = await getNextSequenceNumber(baseNameOriginal, extension); targetFilename = `${baseNameOriginal}-${nextNumber}${extension}`; console.log(`[Upload V2] Calculated filename: ${targetFilename}`); }
-            const targetKey = targetFilename; const targetUrl = `${r2PublicUrl}/${encodeURIComponent(targetKey)}`;
-            console.log(`[Upload V2] Renaming ${tempKey} to ${targetKey}`);
-            const copyCommand = new CopyObjectCommand({ Bucket: R2_BUCKET_NAME, CopySource: `${R2_BUCKET_NAME}/${tempKey}`, Key: targetKey, ACL: 'public-read' }); await s3Client.send(copyCommand);
-            const deleteCommand = new S3DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: tempKey }); await s3Client.send(deleteCommand);
-            await pool.query( `INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) VALUES ($1, $2, $3, $4, $5, $6)`, [targetFilename, targetUrl, cat1Trimmed, cat2Trimmed, cat3Trimmed, folderNameTrimmed] );
-            processedFiles.push(targetFilename); console.log(`[Upload V2] Saved ${targetFilename}`);
+            // ★ file.key は Multer で設定した「元のファイル名」
+            const targetFilename = file.key; 
+            // ★ file.location は multer-s3 が R2 から返す完全なURL
+            const targetUrl = file.location; 
+
+            console.log(`[Upload V3] Saving to DB: ${targetFilename}`);
+
+            // ★ DBに最終ファイル名で保存
+            // (もし同じファイル名がDBにあっても、重複挿入されます。R2上は上書きされます)
+            insertPromises.push(pool.query(
+                `INSERT INTO images (title, url, category_1, category_2, category_3, folder_name)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [targetFilename, targetUrl, cat1Trimmed, cat2Trimmed, cat3Trimmed, folderNameTrimmed]
+            ));
         }
-        res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${processedFiles.length} 件保存` });
-    } catch (error) { console.error('[Upload V2] Error:', error); try { const tempFiles = req.files.map(f => ({ Key: f.key })); if (tempFiles.length > 0) { const d = new DeleteObjectsCommand({ Bucket: R2_BUCKET_NAME, Delete: { Objects: tempFiles } }); await s3Client.send(d); console.log(`[Upload V2] Cleaned up temp files.`); } } catch (cErr) { console.error('[Upload V2] Cleanup Error:', cErr); } res.status(500).json({ message: 'ファイル処理エラー' }); }
+        
+        await Promise.all(insertPromises);
+
+        res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件を元のファイル名で保存しました。` });
+
+    } catch (error) {
+        console.error('[Upload V3] Error during processing:', error);
+        res.status(500).json({ message: 'ファイル処理エラー' });
+    }
 });
+// ▲▲▲ アップロードAPI ここまで ▲▲▲
 
 // CSV API (/download-csv) (拡張子削除済み)
 app.get('/download-csv', isAuthenticated, async (req, res) => {
@@ -191,22 +192,8 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
     } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
 });
 
-// --- ギャラリー用API (デバッグログ付き) ---
-// ▼▼▼ /api/cat1 を「本番コード」に戻す (索引で高速化されているはず) ▼▼▼
-app.get('/api/cat1', isAuthenticated, async (req, res) => {
-    try {
-        console.log("[API] GET /api/cat1 received");
-        const query = 'SELECT DISTINCT category_1 FROM images ORDER BY category_1';
-        console.log("[API] Executing query:", query);
-        const { rows } = await pool.query(query);
-        console.log(`[API] /api/cat1 found ${rows.length} items`);
-        res.json(rows.map(r => r.category_1));
-    } catch (e) {
-        console.error("!!!!! API /api/cat1 FAILED !!!!!", e);
-        res.status(500).json({ message: 'Error fetching cat1' });
-    }
-});
-// ▲▲▲ /api/cat1 ここまで ▲▲▲
+// --- ギャラリー用API (並び替え対応) ---
+app.get('/api/cat1', isAuthenticated, async (req, res) => { try { console.log("[API] /api/cat1 received"); const { rows } = await pool.query('SELECT DISTINCT category_1 FROM images ORDER BY category_1'); console.log(`[API] /api/cat1 found ${rows.length}`); res.json(rows.map(r => r.category_1)); } catch (e) { console.error("!!!!! API /api/cat1 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat1' }); } });
 app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat2/${req.params.cat1} received`); const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1 = $1 ORDER BY category_2', [req.params.cat1]); console.log(`[API] /api/cat2 found ${rows.length}`); res.json(rows.map(r => r.category_2)); } catch (e) { console.error("!!!!! API /api/cat2 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat2' }); } });
 app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat3/${req.params.cat1}/${req.params.cat2} received`); const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); console.log(`[API] /api/cat3 found ${rows.length}`); res.json(rows.map(r => r.category_3)); } catch (e) { console.error("!!!!! API /api/cat3 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat3' }); } });
 app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/folders received`); const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 ORDER BY folder_name', [req.params.cat1, req.params.cat2, req.params.cat3]); console.log(`[API] /api/folders found ${rows.length}`); res.json(rows.map(r => r.folder_name)); } catch (e) { console.error("!!!!! API /api/folders FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching folders' }); } });
@@ -264,7 +251,7 @@ app.post('/api/analyze/:folderName', isAuthenticated, async (req, res) => {
                 const imageBuffer = await getImageBuffer(image.url); const metadata = await sharp(imageBuffer).metadata(); const w = metadata.width; const h = metadata.height;
                 const regions = { cardName: { left: Math.round(w * 0.1), top: Math.round(h * 0.05), width: Math.round(w * 0.8), height: Math.round(h * 0.08) }, cost: { left: Math.round(w * 0.03), top: Math.round(h * 0.03), width: Math.round(w * 0.1), height: Math.round(h * 0.08) }, cardText: { left: Math.round(w * 0.1), top: Math.round(h * 0.55), width: Math.round(w * 0.8), height: Math.round(h * 0.3) }, power: { left: Math.round(w * 0.05), top: Math.round(h * 0.88), width: Math.round(w * 0.25), height: Math.round(h * 0.08) }, expansion:{ left: Math.round(w * 0.65), top: Math.round(h * 0.88), width: Math.round(w * 0.25), height: Math.round(h * 0.05) }, };
                 if (regions.cardName) result.cardName = await runOCR(await sharp(imageBuffer).extract(regions.cardName).toBuffer(), 'Name');
-                if (regions.cost) result.cost = await runOCR(await sharp(imageBuffer).extract(regions.cost).toBuffer(), 'Cost');
+                if (regions.cost) result.cost = await runOCR(await sharp(imageDuffer).extract(regions.cost).toBuffer(), 'Cost');
                 if (regions.cardText) result.cardText = await runOCR(await sharp(imageBuffer).extract(regions.cardText).toBuffer(), 'Text');
                 if (regions.power) result.power = await runOCR(await sharp(imageBuffer).extract(regions.power).toBuffer(), 'Power');
                 if (regions.expansion) result.expansion = await runOCR(await sharp(imageBuffer).extract(regions.expansion).toBuffer(), 'Expansion');
