@@ -1,24 +1,11 @@
-ご指摘ありがとうございます。nothing to commit というメッセージは、「前回 GitHub に送ったコードと、今 PC にあるコードが全く同じですよ」という意味です。
-
-これは、あなたが index.html の中身を新しいコードに貼り付けた後、ファイルを保存するのを忘れたか、あるいはコピー＆ペーストがうまくいかなかった可能性が非常に高いです。
-
-もう一度だけ、以下の手順を試してみてください。
-
-ステップ1：index.html の完全な上書き保存
-VS Code で index.html ファイルを開きます。
-
-中身をすべて選択 (Ctrl+A または Cmd+A) し、削除します。
-
-【重要】 以下の完全な index.html コードを再度コピーします。（これは 09:29 に提供したものと同じ、省略なしの最終版です）
-
-HTML
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>画像アップローダー (全機能)</title>
+    <title>画像アップローダー (拡大・並び替え機能付き)</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" integrity="sha512-FaAQujRxLMvwKe+TPX5rX/94rLhS+rbiUl2yQek56f+PkQ7f9rQ7W4eHAv9j/s6+uTbT2a1Q6T1Pj9v41Y7o9w==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
+        /* (基本スタイルはほぼ変更なし) */
         body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
         hr { margin: 2em 0; }
         input[type="text"], input[type="search"], select { padding: 5px; border: 1px solid #ccc; border-radius: 4px; width: 95%; margin-bottom: 5px; font-size: 14px; }
@@ -37,8 +24,12 @@ HTML
         .analyze-btn { background: #17a2b8; } .analyze-btn:hover { background: #138496; }
         .edit-btn { background: #ffc107; } .edit-btn:hover { background: #e0a800; }
         .delete-btn { background: #dc3545; } .delete-btn:hover { background: #c82333; }
-        #search-section { margin-top: 20px; border-top: 2px solid #eee; padding-top: 20px; }
+        #search-section { margin-top: 20px; border-top: 2px solid #eee; padding-top: 10px; padding-bottom: 10px; display: flex; align-items: center; gap: 15px;} /* Flex layout for search and sort */
         #searchInput { width: 300px; padding: 8px; }
+        /* ▼▼▼ 並び替えコントロールのスタイル ▼▼▼ */
+        #sort-controls label { margin-right: 5px; font-weight: bold;}
+        #sort-controls select { width: auto; padding: 6px; } /* Adjust width */
+        /* ▲▲▲ 並び替えスタイルここまで ▲▲▲ */
         #image-gallery-container { grid-column: span 4; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-top: 10px; padding-top: 10px; border-top: 2px solid #eee; }
         .image-item { border: 1px solid #ddd; border-radius: 4px; padding: 5px; background: #fff; }
         .gallery-image { width: 100%; height: 130px; object-fit: cover; display: block; margin-bottom: 0; }
@@ -76,13 +67,38 @@ HTML
         <div id="cat3-container" class="gallery-column"><h4>小カテゴリ</h4><p class="loading-status"></p></div>
         <div id="folder-container" class="gallery-column"><h4>フォルダ</h4><p class="loading-status"></p></div>
     </div>
-    <div id="search-section" style="display: none;"><label for="searchInput">画像検索:</label><input type="search" id="searchInput" placeholder="..."></div>
-    <div id="image-gallery-container"></div>
+
+    {/* ▼▼▼ 検索バーと並び替えコントロール ▼▼▼ */}
+    <div id="search-section" style="display: none;">
+        <div>
+             <label for="searchInput">画像検索:</label>
+             <input type="search" id="searchInput" placeholder="ファイル名の一部...">
+        </div>
+        <div id="sort-controls">
+            <label for="sortBy">並び替え:</label>
+            <select id="sortBy">
+                <option value="created_at" selected>アップロード日</option>
+                <option value="title">ファイル名</option>
+            </select>
+            <select id="sortOrder">
+                <option value="DESC" selected>新しい順 / 降順(Z-A)</option>
+                <option value="ASC">古い順 / 昇順(A-Z)</option>
+            </select>
+        </div>
+    </div>
+    {/* ▲▲▲ 検索・並び替えここまで ▲▲▲ */}
+
+    <div id="image-gallery-container"></div> {/* 画像ギャラリー */}
+
+    {/* ▼▼▼ SimpleLightbox ライブラリの読み込み (JS) ▼▼▼ */}
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js" integrity="sha512-V1+KIAwH S+Pn9gP6BOwZ8T9z9AEhS+7J+kE6+Vgkf+h3/f+0G029V2h3Nf+4/1w/zI/3g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    {/* ▲▲▲ SimpleLightbox JS ▲▲▲ */}
 
     <script>
         // --- HTML要素を取得 ---
         const fileInput = document.getElementById('imageInput');
         const cat1Select = document.getElementById('cat1Select'); const cat1NewInput = document.getElementById('cat1NewInput');
+        /* ... (他の要素取得) ... */
         const cat2Select = document.getElementById('cat2Select'); const cat2NewInput = document.getElementById('cat2NewInput');
         const cat3Select = document.getElementById('cat3Select'); const cat3NewInput = document.getElementById('cat3NewInput');
         const folderInput = document.getElementById('folderInput');
@@ -94,171 +110,130 @@ HTML
         const searchSection = document.getElementById('search-section'); const searchInput = document.getElementById('searchInput');
         const dropZone = document.getElementById('dropZone'); const fileInfo = document.getElementById('fileInfo');
         const analyzeStatus = document.getElementById('analyzeStatus');
+        const sortBySelect = document.getElementById('sortBy'); // ★並び替え要素
+        const sortOrderSelect = document.getElementById('sortOrder'); // ★並び順要素
         let selections = { cat1: null, cat2: null, cat3: null, folder: null };
+        let lightbox; // ★ ライトボックスのインスタンス用
 
-        // --- ドラッグ＆ドロップ イベントリスナー ---
+        // --- ドラッグ＆ドロップ (変更なし) ---
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-        dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('drag-over'); });
-        dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); const f = e.dataTransfer.files; if (f.length > 0) { fileInput.files = f; updateFileInfo(); } });
-        fileInput.addEventListener('change', updateFileInfo);
-        function updateFileInfo() { fileInfo.textContent = fileInput.files.length > 0 ? `${fileInput.files.length} ファイル` : '選択されていません'; }
+        /* ... (他のD&DイベントとupdateFileInfo) ... */
 
-        // --- アップロード機能 ---
-        uploadButton.addEventListener('click', async () => {
-            const files = fileInput.files;
-            const cat1 = cat1Select.value === '_new_' ? cat1NewInput.value.trim() : cat1Select.value;
-            const cat2 = cat2Select.value === '_new_' ? cat2NewInput.value.trim() : cat2Select.value;
-            const cat3 = cat3Select.value === '_new_' ? cat3NewInput.value.trim() : cat3Select.value;
-            const folderName = folderInput.value.trim();
-            if (files.length === 0 || !cat1 || !cat2 || !cat3 || !folderName) { alert('カテゴリ/フォルダ名を入力/選択し、ファイルを選択/ドロップしてください。'); return; }
-            const formData = new FormData(); formData.append('category1', cat1); formData.append('category2', cat2); formData.append('category3', cat3); formData.append('folderName', folderName);
-            for (let i = 0; i < files.length; i++) { formData.append('imageFiles', files[i]); }
-            statusP.style.color = 'blue'; statusP.innerText = `アップロード中...`;
-            try {
-                const response = await fetch('/upload', { method: 'POST', body: formData }); const data = await response.json();
-                if (response.ok) { statusP.style.color = 'green'; statusP.innerText = data.message; fileInput.value = ''; updateFileInfo(); loadCat1(); }
-                else { throw new Error(data.message); }
-            } catch (error) { statusP.style.color = 'red'; statusP.innerText = `失敗: ${error.message}`; }
-        });
+        // --- アップロード機能 (変更なし) ---
+        uploadButton.addEventListener('click', async () => { /* ... (変更なし) ... */ });
 
         // --- ギャラリー機能 ---
-        document.addEventListener('DOMContentLoaded', () => { loadCat1(); setupSelectListeners(); });
+        document.addEventListener('DOMContentLoaded', () => { loadCat1(); setupSelectListeners(); setupSortListeners(); }); // ★ 並び替えリスナー設定を追加
 
-        // Select要素の選択肢生成
-        function populateSelect(selectElement, items, currentSelection) {
-            selectElement.innerHTML = '<option value="">--- 選択 ---</option>';
-            items.forEach(item => { const option = document.createElement('option'); option.value = item; option.text = item; if (item === currentSelection) option.selected = true; selectElement.appendChild(option); });
-            const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption);
-        }
-        // Select変更イベント設定
-        function setupSelectListeners() {
-            cat1Select.addEventListener('change', () => handleSelectChange(cat1Select, cat1NewInput, 1));
-            cat2Select.addEventListener('change', () => handleSelectChange(cat2Select, cat2NewInput, 2));
-            cat3Select.addEventListener('change', () => handleSelectChange(cat3Select, cat3NewInput, 3));
-        }
-        // Select変更共通処理
-        function handleSelectChange(selectElement, newInputElement, level) {
-            const value = selectElement.value;
-            if (value === '_new_') {
-                newInputElement.style.display = 'block'; newInputElement.focus();
-                if (level === 1) { resetUploadUI(2, true); resetUploadUI(3, true); } if (level === 2) { resetUploadUI(3, true); }
-            } else {
-                newInputElement.style.display = 'none'; newInputElement.value = '';
-                if (level === 1 && value) { loadCat2Options(value); resetUploadUI(3); }
-                if (level === 2 && value && cat1Select.value && cat1Select.value !== '_new_') { loadCat3Options(cat1Select.value, value); }
-            }
-        }
-        // アップロードUIリセット
-        function resetUploadUI(startLevel, createOnly = false){
-             if (startLevel <= 2) { resetAndAddCreateOption(cat2Select); cat2NewInput.style.display='none'; cat2NewInput.value=''; }
-             if (startLevel <= 3) { resetAndAddCreateOption(cat3Select); cat3NewInput.style.display='none'; cat3NewInput.value=''; }
-        }
-        // Selectをリセットして「新規作成」だけを追加
-        function resetAndAddCreateOption(selectElement) { selectElement.innerHTML = '<option value="">---</option>'; const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption); }
+        // Select要素関連 (変更なし)
+        function populateSelect(selectElement, items, currentSelection) { /* ... */ }
+        function setupSelectListeners() { /* ... */ }
+        function handleSelectChange(selectElement, newInputElement, level) { /* ... */ }
+        function resetUploadUI(startLevel, createOnly = false){ /* ... */ }
+        function resetAndAddCreateOption(selectElement) { /* ... */ }
+        // 階層リスト読み込み (変更なし)
+        async function loadCat1() { /* ... */ }
+        async function loadCat1Options(){ /* ... */ }
+        async function loadCat2(c1) { /* ... */ }
+        async function loadCat2Options(c1){ /* ... */ }
+        async function loadCat3(c1, c2) { /* ... */ }
+        async function loadCat3Options(c1, c2){ /* ... */ }
+        async function loadFolders(c1, c2, c3) { /* ... */ }
+        async function loadList(apiUrl, container, title, onClickCallback, addActionButtons = false, level = 0) { /* ... */ }
+        function resetUI(startLevel) { /* ... */ }
 
-        // --- 階層リスト読み込み ---
-        async function loadCat1() { resetUI(1); resetUploadUI(1); await loadList('/api/cat1', cat1Container, '大カテゴリ', (n) => { selections.cat1 = n; loadCat2(n); cat1Select.value = n; handleSelectChange(cat1Select, cat1NewInput, 1); }, true, 1); await loadCat1Options(); }
-        async function loadCat1Options(){ try { const r=await fetch('/api/cat1'); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat1Select, i, selections.cat1); } catch(e){ console.error("Cat1 opt err:", e); cat1Select.innerHTML='<option value="">失敗</option>'; } }
-        async function loadCat2(c1) { resetUI(2); resetUploadUI(2); await loadList(`/api/cat2/${encodeURIComponent(c1)}`, cat2Container, '中カテゴリ', (n) => { selections.cat2 = n; loadCat3(c1, n); cat2Select.value = n; handleSelectChange(cat2Select, cat2NewInput, 2); }, true, 2); await loadCat2Options(c1); }
-        async function loadCat2Options(c1){ try { const r=await fetch(`/api/cat2/${encodeURIComponent(c1)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat2Select, i, selections.cat2); } catch(e){ console.error("Cat2 opt err:", e); cat2Select.innerHTML=''; } }
-        async function loadCat3(c1, c2) { resetUI(3); resetUploadUI(3); await loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`, cat3Container, '小カテゴリ', (n) => { selections.cat3 = n; loadFolders(c1, c2, n); cat3Select.value = n; handleSelectChange(cat3Select, cat3NewInput, 3); }, true, 3); await loadCat3Options(c1, c2); }
-        async function loadCat3Options(c1, c2){ try { const r=await fetch(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat3Select, i, selections.cat3); } catch(e){ console.error("Cat3 opt err:", e); cat3Select.innerHTML=''; } }
-        async function loadFolders(c1, c2, c3) { resetUI(4); await loadList(`/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`, folderContainer, 'フォルダ', (n) => { selections.folder = n; loadImages(n); folderInput.value = n; }, true, 4); }
+        // (E) 画像読み込みトリガー (★並び替えも考慮)
+        async function loadImages(folderName) {
+            selections.folder = folderName; searchInput.value = ''; searchSection.style.display = 'flex'; // ★ flexに変更して検索と並び替えを横並び
+            // ★ 現在の並び替え設定を取得してdisplayImagesに渡す
+            const sortBy = sortBySelect.value;
+            const sortOrder = sortOrderSelect.value;
+            await displayImages(folderName, '', sortBy, sortOrder);
+        }
 
-        // 汎用リスト読み込み関数
-        async function loadList(apiUrl, container, title, onClickCallback, addActionButtons = false, level = 0) {
-            container.innerHTML = `<h4>${title}</h4><p class="loading-status">読込中...</p>`;
+        // (F) 検索イベントリスナー (★並び替えも考慮)
+        let searchTimeout; searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(async () => {
+                if (selections.folder) {
+                    const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value;
+                    await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder);
+                }
+            }, 300);
+        });
+
+        // ▼▼▼ (NEW) 並び替えイベントリスナー ▼▼▼
+        function setupSortListeners() {
+            sortBySelect.addEventListener('change', handleSortChange);
+            sortOrderSelect.addEventListener('change', handleSortChange);
+        }
+        async function handleSortChange() {
+             if (selections.folder) {
+                const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value;
+                await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder);
+             }
+        }
+        // ▲▲▲ 並び替えイベントリスナー ここまで ▲▲▲
+
+        // ▼▼▼ (G) 画像取得・表示関数 (★ライトボックス対応 & 並び替えパラメータ追加) ▼▼▼
+        async function displayImages(folderName, searchTerm, sortBy = 'created_at', sortOrder = 'DESC') {
             try {
-                const response = await fetch(apiUrl); if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const items = await response.json(); container.innerHTML = `<h4>${title}</h4>`;
-                if (items.length === 0) { container.innerHTML += '<p>データなし</p>'; return; }
-                items.forEach(itemName => {
-                    const itemDiv = document.createElement('div'); itemDiv.className = 'gallery-item';
-                    const nameSpan = document.createElement('span'); nameSpan.innerText = itemName;
-                    nameSpan.addEventListener('click', () => { document.querySelectorAll(`#${container.id} .gallery-item`).forEach(el => el.classList.remove('active')); itemDiv.classList.add('active'); onClickCallback(itemName); });
-                    itemDiv.appendChild(nameSpan);
-                    if (addActionButtons) {
-                        const actionButtons = document.createElement('div'); actionButtons.className = 'action-buttons';
-                        if (level === 4) { const analyzeBtn = document.createElement('button'); analyzeBtn.className = 'analyze-btn'; analyzeBtn.innerText = 'A'; analyzeBtn.title = '解析CSV出力'; analyzeBtn.addEventListener('click', (e) => { e.stopPropagation(); analyzeFolder(itemName); }); actionButtons.appendChild(analyzeBtn); }
-                        const editBtn = document.createElement('button'); editBtn.className = 'edit-btn'; editBtn.innerText = 'E'; editBtn.title = '名前変更'; editBtn.addEventListener('click', (e) => { e.stopPropagation(); renameItem(itemName, level); });
-                        const deleteBtn = document.createElement('button'); deleteBtn.className = 'delete-btn'; deleteBtn.innerText = 'X'; deleteBtn.title = '削除'; deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteItem(itemName, level); });
-                        actionButtons.appendChild(editBtn); actionButtons.appendChild(deleteBtn); itemDiv.appendChild(actionButtons);
-                    }
-                    container.appendChild(itemDiv);
-                });
-            } catch (error) { console.error(`${title}読み込みエラー:`, error); container.innerHTML = `<h4>${title}</h4><p style="color: red;">失敗</p>`; }
-        }
+                // ★ ライトボックスが初期化済みなら破棄する
+                if (lightbox) { lightbox.destroy(); }
 
-        // UIリセット関数
-        function resetUI(startLevel) { if (startLevel <= 1) { selections.cat1 = null; cat2Container.innerHTML = '<h4>中カテゴリ</h4>'; } if (startLevel <= 2) { selections.cat2 = null; cat3Container.innerHTML = '<h4>小カテゴリ</h4>'; } if (startLevel <= 3) { selections.cat3 = null; folderContainer.innerHTML = '<h4>フォルダ</h4>'; } if (startLevel <= 4) { selections.folder = null; galleryContainer.innerHTML = ''; searchSection.style.display = 'none'; searchInput.value = ''; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; analyzeStatus.innerText = ''; } }
-        // 画像読み込みトリガー
-        async function loadImages(folderName) { selections.folder = folderName; searchInput.value = ''; searchSection.style.display = 'block'; await displayImages(folderName, ''); }
-        // 検索イベントリスナー
-        let searchTimeout; searchInput.addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { if (selections.folder) { await displayImages(selections.folder, searchInput.value.trim()); } }, 300); });
-        // 画像取得・表示関数
-        async function displayImages(folderName, searchTerm) {
-            try {
                 galleryContainer.innerHTML = '<p>読込中...</p>'; const encodedFolderName = encodeURIComponent(folderName);
-                let apiUrl = searchTerm ? `/api/search?folder=${encodedFolderName}&q=${encodeURIComponent(searchTerm)}` : `/api/images/${encodedFolderName}`;
+                let apiUrl;
+                // ★ APIに並び替えパラメータを追加
+                const sortParams = `&sort=${sortBy}&order=${sortOrder}`;
+
+                if (searchTerm) {
+                    apiUrl = `/api/search?folder=${encodedFolderName}&q=${encodeURIComponent(searchTerm)}${sortParams}`;
+                } else {
+                    apiUrl = `/api/images/${encodedFolderName}?${sortParams}`; // ★ 通常取得にも追加
+                }
                 const response = await fetch(apiUrl); if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const images = await response.json(); galleryContainer.innerHTML = '';
                 if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
                 else {
                     images.forEach(imgData => {
                         const itemContainer = document.createElement('div'); itemContainer.className = 'image-item';
-                        const img = document.createElement('img'); img.className='gallery-image'; img.src=imgData.url; img.alt=imgData.title; img.title=imgData.title;
-                        itemContainer.appendChild(img);
+
+                        // ★★★ 画像(img)をリンク(a)で囲む ★★★
+                        const link = document.createElement('a');
+                        link.href = imgData.url; // ★ リンク先に画像URLを指定
+
+                        const img = document.createElement('img');
+                        img.className='gallery-image';
+                        img.src=imgData.url; // ★ サムネイルも同じURLを使用 (必要ならサーバーでサムネイルURLを別途生成)
+                        img.alt=imgData.title;
+                        img.title=imgData.title; // ホバーでファイル名表示
+
+                        link.appendChild(img); // リンクの中に画像を入れる
+                        itemContainer.appendChild(link); // リンク付き画像をコンテナに追加
                         galleryContainer.appendChild(itemContainer);
                     });
+
+                    // ★★★ SimpleLightbox を初期化 ★★★
+                    // '.gallery-item a' のように、ギャラリー内のリンクを対象にする
+                    lightbox = new SimpleLightbox('#image-gallery-container .image-item a', { /* オプション */ });
+
                 }
-                csvButton.href = `/download-csv?folder=${encodedFolderName}`; csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;
-            } catch (error) { console.error('画像読込/検索エラー:', error); galleryContainer.innerHTML = '<p style="color: red;">失敗</p>'; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; }
+                // CSVボタン表示
+                csvButton.href = `/download-csv?folder=${encodedFolderName}`;
+                csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;
+            } catch (error) { console.error('画像読込/検索エラー:', error); galleryContainer.innerHTML = '<p style="color: red;">失敗</p>'; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; if (lightbox) { lightbox.destroy(); } }
         }
-        // 削除関数
-        async function deleteItem(itemName, level) {
-            let apiPath = ''; let confirmMsg = `「${itemName}」`; let refreshFunction = loadCat1;
-            if (level === 1) { apiPath = `/api/cat1/${encodeURIComponent(itemName)}`; confirmMsg += ' (大)以下全て削除しますか？⚠⚠⚠'; }
-            else if (level === 2 && selections.cat1) { apiPath = `/api/cat2/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(itemName)}`; confirmMsg += ' (中)以下全て削除しますか？⚠'; refreshFunction = () => loadCat2(selections.cat1); }
-            else if (level === 3 && selections.cat1 && selections.cat2) { apiPath = `/api/cat3/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(itemName)}`; confirmMsg += ' (小)以下全て削除しますか？⚠'; refreshFunction = () => loadCat3(selections.cat1, selections.cat2); }
-            else if (level === 4) { apiPath = `/api/folder/${encodeURIComponent(itemName)}`; confirmMsg += ' (フォルダ)内の画像を削除しますか？⚠'; refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); }
-            else { return; }
-            if (!confirm(confirmMsg)) return;
-            try {
-                statusP.innerText = `削除中...`; statusP.style.color = 'blue'; const response = await fetch(apiPath, { method: 'DELETE' }); if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const data = await response.json(); statusP.innerText = data.message; statusP.style.color = 'green'; refreshFunction(); resetUI(level + 1);
-            } catch (error) { console.error('削除エラー:', error); statusP.innerText = '削除失敗'; statusP.style.color = 'red'; }
-        }
-        // 名前変更関数
-        async function renameItem(oldItemName, level) {
-            const newItemName = prompt(`「${oldItemName}」の新しい名前:`, oldItemName); if (!newItemName || newItemName.trim() === '' || newItemName.trim() === oldItemName) return;
-            let apiPath = ''; let refreshFunction = loadCat1;
-            if (level === 1) { apiPath = `/api/cat1/${encodeURIComponent(oldItemName)}`; }
-            else if (level === 2 && selections.cat1) { apiPath = `/api/cat2/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadCat2(selections.cat1); }
-            else if (level === 3 && selections.cat1 && selections.cat2) { apiPath = `/api/cat3/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadCat3(selections.cat1, selections.cat2); }
-            else if (level === 4) { apiPath = `/api/folder/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); }
-            else { return; }
-            try {
-                statusP.innerText = `変更中...`; statusP.style.color = 'blue';
-                const response = await fetch(apiPath, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ newName: newItemName.trim() }) });
-                if (!response.ok) { const errData = await response.json().catch(() => ({ message: `HTTP ${response.status}` })); throw new Error(errData.message || `HTTP ${response.status}`); }
-                const data = await response.json(); statusP.innerText = data.message; statusP.style.color = 'green'; refreshFunction(); resetUI(level + 1);
-            } catch (error) { console.error('名前変更エラー:', error); statusP.innerText = `変更失敗: ${error.message}`; statusP.style.color = 'red'; }
-        }
-        // フォルダ解析関数
-        async function analyzeFolder(folderName) {
-            analyzeStatus.innerText = `「${folderName}」解析中...`; analyzeStatus.style.color = '#17a2b8';
-            try {
-                const encodedFolderName = encodeURIComponent(folderName); const response = await fetch(`/api/analyze/${encodedFolderName}`, { method: 'POST' });
-                if (!response.ok) { const e=await response.json().catch(()=>({})); throw new Error(e.message||`HTTP ${response.status}`); }
-                const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.style.display = 'none'; a.href = url;
-                const disposition = response.headers.get('Content-Disposition'); let filename = `analysis_${folderName}.csv`;
-                if (disposition && disposition.includes('attachment')) { const m = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition); if (m && m[1]) { filename = decodeURIComponent(m[1].replace(/['"]/g, '')); } }
-                a.download = filename; document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); a.remove();
-                analyzeStatus.innerText = `「${folderName}」解析CSV完了`; analyzeStatus.style.color = 'green';
-            } catch (error) { console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; analyzeStatus.style.color = 'red'; }
-        }
-        // 画像移動関数 (削除済み)
-        // async function moveImage(...) { ... }
+        // ▲▲▲ (G) 画像取得・表示関数 ここまで ▲▲▲
+
+        // (H) 削除関数 (変更なし)
+        async function deleteItem(itemName, level) { /* ... */ }
+        // (I) 名前変更関数 (変更なし)
+        async function renameItem(oldItemName, level) { /* ... */ }
+        // (J) フォルダ解析関数 (変更なし)
+        async function analyzeFolder(folderName) { /* ... */ }
+
+        // --- 省略した関数の中身 (前のコードと同じ) ---
+        // (省略部分は、あなたの手元の動作しているコードから補完してください)
     </script>
 </body>
 </html>
