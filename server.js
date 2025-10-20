@@ -130,6 +130,7 @@ function isAuthenticated(req, res, next) {
     if (req.isAuthenticated()) { 
         return next(); 
     }
+    // 認証失敗時、/login にリダイレクト
     console.log('[Auth] Authentication failed. Redirecting to /login.'); 
     res.redirect('/login'); 
 }
@@ -177,7 +178,7 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
 app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
         const { folder } = req.query; let queryText; let queryParams;
-        const orderByClause = 'ORDER BY length(title), title ASC';
+        const orderByClause = 'ORDER BY length(title), title ASC'; // 自然順ソート
 
         if (folder) { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ${orderByClause}`; queryParams = [decodeURIComponent(folder)]; }
         else { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, length(title), title ASC`; queryParams = []; }
