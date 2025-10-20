@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>画像アップローダー (全機能)</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" integrity="sha512-FaAQujRxLMvw+BkmGN3w7u9EdQQr1t0vQoY8KDh09+6SFaWSTe+KrT8oCWg25X91hytm5c5BTmiSGQejkraaZg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
         body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
         hr { margin: 2em 0; }
@@ -258,7 +259,7 @@
                 if (disposition && disposition.includes('attachment')) { const m = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition); if (m && m[1]) { filename = decodeURIComponent(m[1].replace(/['"]/g, '')); } }
                 a.download = filename; document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); a.remove();
                 analyzeStatus.innerText = `「${folderName}」解析CSV完了`; analyzeStatus.style.color = 'green';
-            } catch (error) { console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; analyzeStatus.style.color = 'red'; }
+            } catch (error) { console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; statusP.style.color = 'red'; }
         }
     </script>
 </body>

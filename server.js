@@ -144,44 +144,11 @@ app.post('/login', passport.authenticate('local', { successRedirect: '/', failur
 app.get('/logout', (req, res, next) => { 
     req.logout((err) => { 
         if (err) { return next(err); } 
-        req.session.destroy(() => { // ★ セッションを完全に破壊してからリダイレクト
+        req.session.destroy(() => {
             res.redirect('/login');
         });
     }); 
 });
-
-// 11. 【★パスワード再設定用★】 管理者ユーザーを更新する (一時的に使用)
-app.get('/setup-admin-user', async (req, res) => { 
-    
-    // ★★★ あなたのユーザー名と「新しいパスワード」に書き換えてください ★★★
-    const username = 'onicard8580'; // (あなたのユーザー名)
-    const new_password = 'YOUR_NEW_PASSWORD_HERE'; // (★新しいパスワード！)
-
-    try {
-        await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
-        const salt = await bcrypt.genSalt(10);
-        const password_hash = await bcrypt.hash(new_password, salt);
-        const resetQuery = `
-            INSERT INTO users (username, password_hash) 
-            VALUES ($1, $2) 
-            ON CONFLICT (username) 
-            DO UPDATE SET password_hash = $2;
-        `;
-        
-        await pool.query(resetQuery, [username, password_hash]);
-
-        res.status(200).send(
-            `<h1>パスワードリセット完了</h1>` +
-            `<p>ユーザー名「${username}」のパスワードを上書きしました。新しいパスワードを覚えましたか？</p>` +
-            `<p><b>【最重要】</b>今すぐ server.js から /setup-admin-user のコードを削除し、git push してください！</p>` +
-            `<a href="/">ログインページに戻る</a>`
-        );
-    } catch (err) {
-        console.error('パスワードリセット失敗:', err);
-        res.status(500).send('パスワードリセット中にエラーが発生しました。');
-    }
-});
-
 
 // --- ログイン必須ルート ---
 app.get('/', isAuthenticated, (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
@@ -191,18 +158,15 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
     const { category1, category2, category3, folderName } = req.body;
     if (!category1 || !category2 || !category3 || !folderName ) { return res.status(400).json({ message: '全カテゴリ・フォルダ名必須' }); }
     if (!req.files || req.files.length === 0) { return res.status(400).json({ message: 'ファイル未選択' }); }
-    console.log(`[Upload V3] Received ${req.files.length} files for ${category1}/${category2}/${category3}/${folderName}`);
     const cat1Trimmed = category1.trim(); const cat2Trimmed = category2.trim(); const cat3Trimmed = category3.trim(); const folderNameTrimmed = folderName.trim();
-    const processedFiles = [];
     try {
         const insertPromises = [];
         for (const file of req.files) {
             const targetFilename = file.key; const targetUrl = `${r2PublicUrl}/${encodeURIComponent(targetFilename)}`; 
             insertPromises.push(pool.query( `INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) VALUES ($1, $2, $3, $4, $5, $6)`, [targetFilename, targetUrl, cat1Trimmed, cat2Trimmed, cat3Trimmed, folderNameTrimmed] ));
-            processedFiles.push(targetFilename); console.log(`[Upload V3] Saved ${targetFilename}`);
         }
         await Promise.all(insertPromises);
-        res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${processedFiles.length} 件を元のファイル名で保存しました。` });
+        res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件を元のファイル名で保存しました。` });
     } catch (error) { console.error('[Upload V3] Error during processing:', error); res.status(500).json({ message: 'ファイル処理エラー' }); }
 });
 
@@ -211,18 +175,16 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
         const { folder } = req.query; let queryText; let queryParams;
         const orderByClause = 'ORDER BY length(title), title ASC';
-
         if (folder) { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ${orderByClause}`; queryParams = [decodeURIComponent(folder)]; }
         else { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, length(title), title ASC`; queryParams = []; }
-        
         const { rows } = await pool.query(queryText, queryParams); if (rows.length === 0) { return res.status(404).send('対象履歴なし'); }
         let csvContent = "大カテゴリ,中カテゴリ,小カテゴリ,フォルダ名,題名,URL\n";
-        rows.forEach(item => { const c1=`"${(item.category_1||'').replace(/"/g,'""')}"`; const c2=`"${(item.category_2||'').replace(/"/g,'""')}"`; const c3=`"${(item.category_3||'').replace(/"/g,'""')}"`; const f=`"${(item.folder_name||'').replace(/"/g,'""')}"`; const titleWithoutExtension = item.title.substring(0, item.title.lastIndexOf('.')) || item.title; const t = `"${titleWithoutExtension.replace(/"/g,'""')}"`; const u=`"${item.url.replace(/"/g,'""')}"`; csvContent += `${c1},${c2},${c3},${f},${t},${u}\n`; });
+        rows.forEach(item => { const c1=`"${(item.category_1||'').replace(/"/g,'""')}"`; const c2=`"${(item.category_2||'').replace(/"/g,'""')}"`; const c3=`"${(item.category_3||'').replace(/"/g,'""')}"`; const f=`"${(item.folder_name||'').replace(/"/g,'""')}"`; const titleWithoutExtension = item.title.substring(0, item.title.lastIndexOf('.')) || item.title; const t = `"${titleWithoutExtension.replace(/"/g, '""')}"`; const u=`"${item.url.replace(/"/g,'""')}"`; csvContent += `${c1},${c2},${c3},${f},${t},${u}\n`; });
         const fileName = folder ? `list_${decodeURIComponent(folder)}.csv` : 'list_all.csv'; const bom = '\uFEFF'; res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`); res.status(200).send(bom + csvContent);
     } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
 });
 
-// --- ギャラリー用API ---
+// --- ギャラリー用API (デバッグログ付き) ---
 app.get('/api/cat1', isAuthenticated, async (req, res) => {
     try {
         console.log("[API] GET /api/cat1 received");
@@ -230,10 +192,7 @@ app.get('/api/cat1', isAuthenticated, async (req, res) => {
         const { rows } = await pool.query(query);
         console.log(`[API] /api/cat1 found ${rows.length} items`);
         res.json(rows.map(r => r.category_1));
-    } catch (e) {
-        console.error("!!!!! API /api/cat1 FAILED !!!!!", e);
-        res.status(500).json({ message: 'Error fetching cat1' });
-    }
+    } catch (e) { console.error("!!!!! API /api/cat1 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat1' }); }
 });
 app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat2/${req.params.cat1} received`); const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1 = $1 ORDER BY category_2', [req.params.cat1]); console.log(`[API] /api/cat2 found ${rows.length}`); res.json(rows.map(r => r.category_2)); } catch (e) { console.error("!!!!! API /api/cat2 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat2' }); } });
 app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat3/${req.params.cat1}/${req.params.cat2} received`); const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); console.log(`[API] /api/cat3 found ${rows.length}`); res.json(rows.map(r => r.category_3)); } catch (e) { console.error("!!!!! API /api/cat3 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat3' }); } });
