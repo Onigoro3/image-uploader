@@ -130,7 +130,6 @@ function isAuthenticated(req, res, next) {
     if (req.isAuthenticated()) { 
         return next(); 
     }
-    // 認証失敗時、/login にリダイレクト
     console.log('[Auth] Authentication failed. Redirecting to /login.'); 
     res.redirect('/login'); 
 }
@@ -178,7 +177,7 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
 app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
         const { folder } = req.query; let queryText; let queryParams;
-        const orderByClause = 'ORDER BY length(title), title ASC'; // 自然順ソート
+        const orderByClause = 'ORDER BY length(title), title ASC';
 
         if (folder) { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ${orderByClause}`; queryParams = [decodeURIComponent(folder)]; }
         else { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, length(title), title ASC`; queryParams = []; }
@@ -190,7 +189,7 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
     } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
 });
 
-// --- ギャラリー用API ---
+// --- ギャラリー用API (デバッグログ付き) ---
 app.get('/api/cat1', isAuthenticated, async (req, res) => {
     try {
         console.log("[API] GET /api/cat1 received");
