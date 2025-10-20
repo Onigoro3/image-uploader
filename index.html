@@ -26,11 +26,7 @@
         #searchInput { width: 300px; padding: 8px; }
         #image-gallery-container { grid-column: span 4; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-top: 10px; padding-top: 10px; border-top: 2px solid #eee; }
         .image-item { border: 1px solid #ddd; border-radius: 4px; padding: 5px; background: #fff; }
-        .gallery-image { width: 100%; height: 130px; object-fit: cover; display: block; margin-bottom: 5px;}
-        .move-controls { font-size: 12px; text-align: center;}
-        .move-controls select { width: 80%; font-size: 11px; padding: 2px; margin-bottom: 3px; }
-        .move-controls button { font-size: 11px; padding: 2px 5px; background-color: #6c757d; color: white; border:none; }
-        .move-controls button:hover { background-color: #5a6268;}
+        .gallery-image { width: 100%; height: 130px; object-fit: cover; display: block; margin-bottom: 0; }
         .new-input { display: none; margin-top: 5px; }
         #analyzeStatus { margin-top: 10px; font-weight: bold; color: #17a2b8; }
         #dropZone { border: 2px dashed #ccc; padding: 20px; text-align: center; margin-top: 10px; transition: background-color 0.2s ease; }
@@ -193,29 +189,18 @@
                 const images = await response.json(); galleryContainer.innerHTML = '';
                 if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
                 else {
-                    const allCat1 = await fetch('/api/cat1').then(res => res.ok ? res.json() : []);
+                    // 移動機能は削除したので allCat1 の取得は不要
                     images.forEach(imgData => {
                         const itemContainer = document.createElement('div'); itemContainer.className = 'image-item';
-                        const img = document.createElement('img'); img.className='gallery-image'; img.src=imgData.url; img.alt=imgData.title; img.title=imgData.title; itemContainer.appendChild(img);
-                        const moveControls = document.createElement('div'); moveControls.className = 'move-controls';
-                        const selCat1 = document.createElement('select'); selCat1.title = "移動先 大"; populateSelectSimple(selCat1, allCat1);
-                        const selCat2 = document.createElement('select'); selCat2.title = "移動先 中";
-                        const selCat3 = document.createElement('select'); selCat3.title = "移動先 小";
-                        const selFolder = document.createElement('select'); selFolder.title = "移動先 フォルダ";
-                        selCat1.onchange = async () => { selCat2.innerHTML = '<option value="">-</option>'; selCat3.innerHTML = '<option value="">-</option>'; selFolder.innerHTML = '<option value="">-</option>'; if(selCat1.value) { const c2s=await fetch(`/api/cat2/${encodeURIComponent(selCat1.value)}`).then(r => r.ok ? r.json():[]); populateSelectSimple(selCat2, c2s); } };
-                        selCat2.onchange = async () => { selCat3.innerHTML = '<option value="">-</option>'; selFolder.innerHTML = '<option value="">-</option>'; if(selCat1.value && selCat2.value) { const c3s=await fetch(`/api/cat3/${encodeURIComponent(selCat1.value)}/${encodeURIComponent(selCat2.value)}`).then(r => r.ok ? r.json():[]); populateSelectSimple(selCat3, c3s); } };
-                        selCat3.onchange = async () => { selFolder.innerHTML = '<option value="">-</option>'; if(selCat1.value && selCat2.value && selCat3.value) { const fs=await fetch(`/api/folders/${encodeURIComponent(selCat1.value)}/${encodeURIComponent(selCat2.value)}/${encodeURIComponent(selCat3.value)}`).then(r => r.ok ? r.json():[]); populateSelectSimple(selFolder, fs); } };
-                        const moveBtn = document.createElement('button'); moveBtn.innerText = '移動';
-                        moveBtn.onclick = () => { if (selCat1.value && selCat2.value && selCat3.value && selFolder.value) { moveImage(imgData.title, selCat1.value, selCat2.value, selCat3.value, selFolder.value); } else { alert('移動先を全て選択'); } };
-                        moveControls.appendChild(selCat1); moveControls.appendChild(selCat2); moveControls.appendChild(selCat3); moveControls.appendChild(selFolder); moveControls.appendChild(moveBtn);
-                        itemContainer.appendChild(moveControls); galleryContainer.appendChild(itemContainer);
+                        const img = document.createElement('img'); img.className='gallery-image'; img.src=imgData.url; img.alt=imgData.title; img.title=imgData.title;
+                        itemContainer.appendChild(img);
+                        galleryContainer.appendChild(itemContainer);
+                        // 移動コントロールの生成は削除
                     });
                 }
                 csvButton.href = `/download-csv?folder=${encodedFolderName}`; csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;
             } catch (error) { console.error('画像読込/検索エラー:', error); galleryContainer.innerHTML = '<p style="color: red;">失敗</p>'; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; }
         }
-        // 移動用ドロップダウン生成ヘルパー
-        function populateSelectSimple(selectElement, items) { selectElement.innerHTML = '<option value="">---</option>'; items.forEach(item => { const option = document.createElement('option'); option.value = item; option.text = item; selectElement.appendChild(option); }); }
         // 削除関数
         async function deleteItem(itemName, level) {
             let apiPath = ''; let confirmMsg = `「${itemName}」`; let refreshFunction = loadCat1;
@@ -259,16 +244,8 @@
                 analyzeStatus.innerText = `「${folderName}」解析CSV完了`; analyzeStatus.style.color = 'green';
             } catch (error) { console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; analyzeStatus.style.color = 'red'; }
         }
-        // 画像移動関数
-        async function moveImage(imageTitle, newCat1, newCat2, newCat3, newFolder) {
-            try {
-                statusP.style.color = 'blue'; statusP.innerText = `移動中...`; const encodedImageTitle = encodeURIComponent(imageTitle);
-                const response = await fetch(`/api/image/${encodedImageTitle}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category1: newCat1, category2: newCat2, category3: newCat3, folderName: newFolder }) });
-                if (!response.ok) { const e=await response.json().catch(()=>({})); throw new Error(e.message||`HTTP ${response.status}`); }
-                const data = await response.json(); statusP.innerText = data.message; statusP.style.color = 'green';
-                if(selections.folder) { await displayImages(selections.folder, searchInput.value.trim()); }
-            } catch (error) { console.error('画像移動エラー:', error); statusP.innerText = `移動失敗: ${error.message}`; statusP.style.color = 'red'; }
-        }
+        // 画像移動関数 (削除済み)
+        // async function moveImage(...) { ... }
     </script>
 </body>
 </html>
