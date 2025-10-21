@@ -112,7 +112,12 @@ const createTable = async () => {
     );
     `;
 
-    const alterColumns = [ /* (変更なし) */ ];
+    const alterColumns = [
+        `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_1') THEN ALTER TABLE images ADD COLUMN category_1 VARCHAR(100) DEFAULT 'default_cat1'; END IF; END $$;`,
+        `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_2') THEN ALTER TABLE images ADD COLUMN category_2 VARCHAR(100) DEFAULT 'default_cat2'; END IF; END $$;`,
+        `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_3') THEN ALTER TABLE images ADD COLUMN category_3 VARCHAR(100) DEFAULT 'default_cat3'; END IF; END $$;`,
+        `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='folder_name') THEN ALTER TABLE images ADD COLUMN folder_name VARCHAR(100) DEFAULT 'default_folder'; END IF; END $$;`
+    ];
     
     const createIndexes = [
         `CREATE INDEX IF NOT EXISTS idx_images_cat1 ON images (category_1);`,
@@ -165,13 +170,52 @@ const upload = multer({
 // ★★★★★ ルート（URL）設定 ★★★★★
 // -----------------------------------------------------------------
 
-// --- 認証ルート (変更なし) ---
-app.get('/login', (req, res) => { res.sendFile(path.join(__dirname, 'login.html')); });
-app.get('/register', (req, res) => { res.sendFile(path.join(__dirname, 'register.html')); });
-app.post('/api/auth/register', async (req, res) => { /* (変更なし) */ });
-app.post('/api/auth/login', passport.authenticate('local'), (req, res) => { /* (変更なし) */ });
-app.post('/api/auth/logout', (req, res, next) => { /* (変更なし) */ });
-app.get('/api/auth/check', (req, res) => { /* (変更なし) */ });
+// --- 認証ルート ---
+app.get('/login', (req, res) => {
+    res.sendFile(path.join(__dirname, 'login.html'));
+});
+app.get('/register', (req, res) => {
+    res.sendFile(path.join(__dirname, 'register.html'));
+});
+app.post('/api/auth/register', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password || password.length < 8) {
+        return res.status(400).json({ message: 'ユーザー名と8文字以上のパスワードが必要です。' });
+    }
+    try {
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(password, salt);
+        await pool.query('INSERT INTO users (username, password_hash) VALUES ($1, $2)', [username, passwordHash]);
+        res.status(201).json({ message: '登録が成功しました。' });
+    } catch (error) {
+        if (error.code === '23505') { 
+            res.status(409).json({ message: 'そのユーザー名はすでに使用されています。' });
+        } else {
+            console.error('Register Error:', error);
+            res.status(500).json({ message: 'サーバーエラーが発生しました。' });
+        }
+    }
+});
+app.post('/api/auth/login', passport.authenticate('local'), (req, res) => {
+    res.json({ message: 'ログイン成功', user: req.user.username });
+});
+app.post('/api/auth/logout', (req, res, next) => {
+    req.logout((err) => {
+        if (err) { return next(err); }
+        req.session.destroy((err) => {
+            if (err) { return res.status(500).json({ message: 'ログアウトに失敗しました。' }); }
+            res.clearCookie('connect.sid'); 
+            res.json({ message: 'ログアウトしました。' });
+        });
+    });
+});
+app.get('/api/auth/check', (req, res) => {
+    if (req.isAuthenticated()) {
+        res.json({ loggedIn: true, username: req.user.username });
+    } else {
+        res.json({ loggedIn: false });
+    }
+});
 
 // ★ メインページ ( / ) (変更なし)
 app.get('/', (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
@@ -190,7 +234,6 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
     try {
         await client.query('BEGIN');
         
-        // 1. images テーブルへのバルクインサート (既存ロジック)
         const values = []; const params = []; let paramIndex = 1;
         for (const file of req.files) {
             const targetFilename = file.key;
@@ -204,7 +247,6 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
         `;
         await client.query(queryText, params);
         
-        // 2. ★ folders テーブルにフォルダが存在することを保証する
         const folderSyncQuery = `
             INSERT INTO folders (category_1, category_2, category_3, folder_name)
             VALUES ($1, $2, $3, $4)
@@ -225,18 +267,45 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
 // --- ▲▲▲ 修正 (folders テーブルにも INSERT) ▲▲▲ ---
 
 // ==================================================================
-// ▼▼▼ CSV API (/download-csv) (変更なし) ▼▼▼
+// ▼▼▼ CSV API (/download-csv) ▼▼▼
 // ==================================================================
-app.get('/download-csv', isAuthenticated, async (req, res) => { /* (変更なし) */ });
+app.get('/download-csv', isAuthenticated, async (req, res) => {
+    try {
+        const { folder } = req.query; let queryText; let queryParams;
+        const orderByClause = 'ORDER BY length(title), title ASC';
+        if (folder) { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ${orderByClause}`; queryParams = [decodeURIComponent(folder)]; }
+        else { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, length(title), title ASC`; queryParams = []; }
+        const { rows } = await pool.query(queryText, queryParams); if (rows.length === 0) { return res.status(404).send('対象履歴なし'); }
+        let csvContent = "大カテゴリ,中カテゴリ,小カテゴリ,フォルダ名,題名,URL\n";
+        rows.forEach(item => { const c1=`"${(item.category_1||'').replace(/"/g,'""')}"`; const c2=`"${(item.category_2||'').replace(/"/g,'""')}"`; const c3=`"${(item.category_3||'').replace(/"/g,'""')}"`; const f=`"${(item.folder_name||'').replace(/"/g,'""')}"`; const titleWithoutExtension = item.title.substring(0, item.title.lastIndexOf('.')) || item.title; const t = `"${titleWithoutExtension.replace(/"/g,'""')}"`; const u=`"${item.url.replace(/"/g,'""')}"`; csvContent += `${c1},${c2},${c3},${f},${t},${u}\n`; });
+        const fileName = folder ? `list_${decodeURIComponent(folder)}.csv` : 'list_all.csv'; const bom = '\uFEFF'; res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`); res.status(200).send(bom + csvContent);
+    } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
+});
 
 
 // ==================================================================
 // ▼▼▼ ギャラリー・編集・削除 API ▼▼▼
 // ==================================================================
-// --- Cat1, Cat2, Cat3 API (変更なし) ---
-app.get('/api/cat1', isAuthenticated, async (req, res) => { /* (変更なし) */ });
-app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { /* (変更なし) */ });
-app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { /* (変更なし) */ });
+// --- Cat1, Cat2, Cat3 API ---
+app.get('/api/cat1', isAuthenticated, async (req, res) => {
+    try {
+        const query = 'SELECT DISTINCT category_1 FROM images ORDER BY category_1';
+        const { rows } = await pool.query(query);
+        res.json(rows.map(r => r.category_1));
+    } catch (e) { console.error("!!!!! API /api/cat1 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat1' }); }
+});
+app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { 
+    try { 
+        const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1 = $1 ORDER BY category_2', [req.params.cat1]); 
+        res.json(rows.map(r => r.category_2)); 
+    } catch (e) { console.error("!!!!! API /api/cat2 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat2' }); } 
+});
+app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { 
+    try { 
+        const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); 
+        res.json(rows.map(r => r.category_3)); 
+    } catch (e) { console.error("!!!!! API /api/cat3 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat3' }); } 
+});
 
 // --- ▼▼▼ /api/folders を修正 (folders テーブルから取得) ▼▼▼ ---
 app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { 
@@ -245,7 +314,6 @@ app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => {
     try { 
         await client.query('BEGIN');
         
-        // 1. images テーブルに存在するが folders テーブルにないフォルダを同期
         const syncQuery = `
             INSERT INTO folders (category_1, category_2, category_3, folder_name)
             SELECT DISTINCT category_1, category_2, category_3, folder_name
@@ -255,7 +323,6 @@ app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => {
         `;
         await client.query(syncQuery, [cat1, cat2, cat3]);
         
-        // 2. folders テーブルから並び順 (sort_order) で取得
         const selectQuery = `
             SELECT folder_name 
             FROM folders
@@ -288,10 +355,9 @@ app.post('/api/folders/reorder', isAuthenticated, async (req, res) => {
     try {
         await client.query('BEGIN');
         
-        // 配列の順序 (index) を使って sort_order を更新
         for (let i = 0; i < orderedFolderNames.length; i++) {
             const folderName = orderedFolderNames[i];
-            const sortOrder = i; // 0ベースのインデックスを並び順として保存
+            const sortOrder = i;
             
             await client.query(
                 `UPDATE folders 
@@ -313,16 +379,60 @@ app.post('/api/folders/reorder', isAuthenticated, async (req, res) => {
 });
 // --- ▲▲▲ フォルダ並び替えAPIを新規追加 ▲▲▲ ---
 
-app.get('/api/images/:folderName', isAuthenticated, async (req, res) => { /* (変更なし) */ });
-app.get('/api/search', isAuthenticated, async (req, res) => { /* (変更なし) */ });
+app.get('/api/images/:folderName', isAuthenticated, async (req, res) => { 
+    try { 
+        const sortBy = req.query.sort === 'title' ? 'title' : 'created_at'; 
+        const sortOrder = req.query.order === 'ASC' ? 'ASC' : 'DESC'; 
+        const qT = `SELECT title, url FROM images WHERE folder_name = $1 ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}`; 
+        const { rows } = await pool.query(qT, [req.params.folderName]); 
+        res.json(rows); 
+    } catch (e) { console.error("!!!!! API /api/images FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching images' }); } 
+});
+app.get('/api/search', isAuthenticated, async (req, res) => { 
+    const { folder, q } = req.query; 
+    const sortBy = req.query.sort === 'title' ? 'title' : 'created_at'; 
+    const sortOrder = req.query.order === 'ASC' ? 'ASC' : 'DESC'; 
+    if (!folder) { return res.status(400).json({ message: 'フォルダ指定必須' }); } 
+    try { 
+        let qT; let qP; const oBC = `ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}`; 
+        if (q && q.trim() !== '') { 
+            const s = `%${q}%`; 
+            qT = `SELECT title, url FROM images WHERE folder_name = $1 AND title ILIKE $2 ${oBC}`; qP = [folder, s]; 
+        } else { 
+            qT = `SELECT title, url FROM images WHERE folder_name = $1 ${oBC}`; qP = [folder]; 
+        } 
+        const { rows } = await pool.query(qT, qP); 
+        res.json(rows); 
+    } catch (e) { console.error("!!!!! API /api/search FAILED !!!!!", e); res.status(500).json({ message: '検索失敗' }); } 
+});
 
-// --- カテゴリ・フォルダ編集API (Cat1, 2, 3) (変更なし) ---
-app.put('/api/cat1/:oldName', isAuthenticated, async (req, res) => { /* (変更なし) */ });
-app.put('/api/cat2/:cat1/:oldName', isAuthenticated, async (req, res) => { /* (変更なし) */ });
-app.put('/api/cat3/:cat1/:cat2/:oldName', isAuthenticated, async (req, res) => { /* (変更なし) */ });
+// --- カテゴリ・フォルダ編集API ---
+app.put('/api/cat1/:oldName', isAuthenticated, async (req, res) => { 
+    const { oldName } = req.params; const { newName } = req.body; 
+    if (!newName || newName.trim() === '' || newName.trim() === oldName) return res.status(400).json({message: 'Invalid name'}); 
+    try { 
+        await pool.query('UPDATE images SET category_1 = $1 WHERE category_1 = $2', [newName.trim(), oldName]); 
+        res.json({ message: `大カテゴリ名変更完了` }); 
+    } catch (e) { console.error("Rename Cat1 Error:", e); res.status(500).json({ message: '名前変更失敗' }); } 
+});
+app.put('/api/cat2/:cat1/:oldName', isAuthenticated, async (req, res) => { 
+    const { cat1, oldName } = req.params; const { newName } = req.body; 
+    if (!newName || newName.trim() === '' || newName.trim() === oldName) return res.status(400).json({message: 'Invalid name'}); 
+    try { 
+        await pool.query('UPDATE images SET category_2 = $1 WHERE category_1 = $2 AND category_2 = $3', [newName.trim(), cat1, oldName]); 
+        res.json({ message: `中カテゴリ名変更完了` }); 
+    } catch (e) { console.error("Rename Cat2 Error:", e); res.status(500).json({ message: '名前変更失敗' }); } 
+});
+app.put('/api/cat3/:cat1/:cat2/:oldName', isAuthenticated, async (req, res) => { 
+    const { cat1, cat2, oldName } = req.params; const { newName } = req.body; 
+    if (!newName || newName.trim() === '' || newName.trim() === oldName) return res.status(400).json({message: 'Invalid name'}); 
+    try { 
+        await pool.query('UPDATE images SET category_3 = $1 WHERE category_1 = $2 AND category_2 = $3 AND category_3 = $4', [newName.trim(), cat1, cat2, oldName]); 
+        res.json({ message: `小カテゴリ名変更完了` }); 
+    } catch (e) { console.error("Rename Cat3 Error:", e); res.status(500).json({ message: '名前変更失敗' }); } 
+});
 
 // --- ▼▼▼ フォルダ名変更 (PUT /api/folder) を修正 (folders テーブルも更新) ▼▼▼ ---
-// APIパスを /:oldName から /:cat1/:cat2/:cat3/:oldName に変更
 app.put('/api/folder/:cat1/:cat2/:cat3/:oldName', isAuthenticated, async (req, res) => { 
     const { cat1, cat2, cat3, oldName } = req.params; 
     const { newName } = req.body;
@@ -333,12 +443,10 @@ app.put('/api/folder/:cat1/:cat2/:cat3/:oldName', isAuthenticated, async (req, r
         await client.query('BEGIN');
         const newNameTrimmed = newName.trim();
         
-        // 1. images テーブルを更新
         await client.query(
             'UPDATE images SET folder_name = $1 WHERE category_1 = $2 AND category_2 = $3 AND category_3 = $4 AND folder_name = $5', 
             [newNameTrimmed, cat1, cat2, cat3, oldName]
         );
-        // 2. folders テーブルを更新
         await client.query(
             'UPDATE folders SET folder_name = $1 WHERE category_1 = $2 AND category_2 = $3 AND category_3 = $4 AND folder_name = $5',
             [newNameTrimmed, cat1, cat2, cat3, oldName]
@@ -362,7 +470,6 @@ async function performDelete(res, conditions, params, itemDescription, levelData
     try {
         await client.query('BEGIN');
         
-        // 1. R2からオブジェクト削除 (既存ロジック)
         const { rows } = await client.query(`SELECT title FROM images WHERE ${conditions}`, params);
         if (rows.length > 0) {
             const objectsToDelete = rows.map(row => ({ Key: row.title }));
@@ -370,22 +477,19 @@ async function performDelete(res, conditions, params, itemDescription, levelData
                 const chunk = objectsToDelete.slice(i, i + 1000); 
                 const deleteCommand = new DeleteObjectsCommand({ Bucket: R2_BUCKET_NAME, Delete: { Objects: chunk } }); 
                 await s3Client.send(deleteCommand); 
-                console.log(`Deleted ${chunk.length} R2 objects`); 
             }
         }
         
-        // 2. images テーブルから削除
         const deleteResult = await client.query(`DELETE FROM images WHERE ${conditions}`, params); 
         console.log(`Deleted ${deleteResult.rowCount} DB records for ${itemDescription}`);
         
-        // 3. ★ levelData があれば、関連する folders テーブルの行も削除
-        if (levelData.level === 1) { // 大カテゴリ
+        if (levelData.level === 1) { 
             await client.query(`DELETE FROM folders WHERE category_1 = $1`, [levelData.name]);
-        } else if (levelData.level === 2) { // 中カテゴリ
+        } else if (levelData.level === 2) { 
             await client.query(`DELETE FROM folders WHERE category_1 = $1 AND category_2 = $2`, [levelData.cat1, levelData.name]);
-        } else if (levelData.level === 3) { // 小カテゴリ
+        } else if (levelData.level === 3) { 
             await client.query(`DELETE FROM folders WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3`, [levelData.cat1, levelData.cat2, levelData.name]);
-        } else if (levelData.level === 4) { // フォルダ
+        } else if (levelData.level === 4) { 
             await client.query(`DELETE FROM folders WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 AND folder_name = $4`, [levelData.cat1, levelData.cat2, levelData.cat3, levelData.name]);
         }
         
@@ -399,7 +503,7 @@ async function performDelete(res, conditions, params, itemDescription, levelData
         client.release();
     }
 }
-// 削除APIの呼び出しを修正
+
 app.delete('/api/cat1/:name', isAuthenticated, async (req, res) => { 
     await performDelete(res, 'category_1 = $1', [req.params.name], `大カテゴリ「${req.params.name}」`, {level: 1, name: req.params.name}); 
 });
@@ -409,7 +513,6 @@ app.delete('/api/cat2/:cat1/:name', isAuthenticated, async (req, res) => {
 app.delete('/api/cat3/:cat1/:cat2/:name', isAuthenticated, async (req, res) => { 
     await performDelete(res, 'category_1 = $1 AND category_2 = $2 AND category_3 = $3', [req.params.cat1, req.params.cat2, req.params.name], `小カテゴリ「${req.params.name}」`, {level: 3, cat1: req.params.cat1, cat2: req.params.cat2, name: req.params.name}); 
 });
-// フォルダ削除APIのパスを /:name から /:cat1/:cat2/:cat3/:name に変更
 app.delete('/api/folder/:cat1/:cat2/:cat3/:name', isAuthenticated, async (req, res) => { 
     const { cat1, cat2, cat3, name } = req.params;
     await performDelete(res, 'category_1 = $1 AND category_2 = $2 AND category_3 = $3 AND folder_name = $4', [cat1, cat2, cat3, name], `フォルダ「${name}」`, {level: 4, cat1, cat2, cat3, name}); 
@@ -417,12 +520,46 @@ app.delete('/api/folder/:cat1/:cat2/:cat3/:name', isAuthenticated, async (req, r
 // --- ▲▲▲ performDelete 関数 と 削除API群を修正 ▲▲▲ ---
 
 
-// --- 画像移動API (変更なし) ---
-app.put('/api/image/:imageTitle', isAuthenticated, async (req, res) => { /* (変更なし) */ });
+// --- 画像移動API ---
+app.put('/api/image/:imageTitle', isAuthenticated, async (req, res) => {
+    const { imageTitle } = req.params; const { category1, category2, category3, folderName } = req.body;
+    if (!category1 || !category2 || !category3 || !folderName) { return res.status(400).json({ message: '移動先指定必須' }); }
+    try {
+        const updateQuery = `UPDATE images SET category_1 = $1, category_2 = $2, category_3 = $3, folder_name = $4 WHERE title = $5`;
+        const result = await pool.query(updateQuery, [ category1.trim(), category2.trim(), category3.trim(), folderName.trim(), imageTitle ]);
+        if (result.rowCount === 0) { return res.status(404).json({ message: '画像なし' }); }
+        res.json({ message: `画像移動完了` });
+    } catch (error) { console.error(`Move Image Error:`, error); res.status(500).json({ message: '移動失敗' }); }
+});
 
-// --- 解析API (変更なし) ---
-app.post('/api/analyze/:folderName', isAuthenticated, async (req, res) => { /* (変更なし) */ });
-
+// --- 解析API (Tesseract.js 版) ---
+app.post('/api/analyze/:folderName', isAuthenticated, async (req, res) => {
+    const { folderName } = req.params; console.log(`[Analyze Tesseract] Req: ${folderName}`); let worker;
+    const getImageBuffer = (url) => new Promise((resolve, reject) => { https.get(url, (response) => { if (response.statusCode !== 200) return reject(new Error(`Status Code: ${response.statusCode}`)); const d = []; response.on('data', c => d.push(c)); response.on('end', () => resolve(Buffer.concat(d))); }).on('error', reject); });
+    const runOCR = async (buffer, regionName) => { try { const pBuf = await sharp(buffer).grayscale().toBuffer(); const { data: { text } } = await worker.recognize(pBuf); console.log(`[Tesseract] OCR Ok [${regionName}]`); return text.replace(/"/g, '""').replace(/\n/g, ' ').trim(); } catch (e) { console.error(`[Tesseract] OCR Err [${regionName}]:`, e.message); return '*** OCR ERR ***'; } };
+    try {
+        const { rows } = await pool.query('SELECT title, url FROM images WHERE folder_name = $1 ORDER BY title', [folderName]); if (rows.length === 0) return res.status(404).json({ message: '画像なし' });
+        console.log(`[Tesseract] Found ${rows.length} images`);
+        worker = await createWorker('jpn+eng', 1, { logger: m => console.log(`[Tesseract] ${m.status}: ${m.progress * 100}%`) }); console.log('[Tesseract] Worker init.');
+        let analysisResults = [];
+        for (const image of rows) {
+            console.log(`[Tesseract] Processing: ${image.title}`); const result = { filename: image.title, cardName: '', cardText: '', power: '', cost: '', expansion: '' };
+            try {
+                const imageBuffer = await getImageBuffer(image.url); const metadata = await sharp(imageBuffer).metadata(); const w = metadata.width; const h = metadata.height;
+                const regions = { cardName: { left: Math.round(w * 0.1), top: Math.round(h * 0.05), width: Math.round(w * 0.8), height: Math.round(h * 0.08) }, cost: { left: Math.round(w * 0.03), top: Math.round(h * 0.03), width: Math.round(w * 0.1), height: Math.round(h * 0.08) }, cardText: { left: Math.round(w * 0.1), top: Math.round(h * 0.55), width: Math.round(w * 0.8), height: Math.round(h * 0.3) }, power: { left: Math.round(w * 0.05), top: Math.round(h * 0.88), width: Math.round(w * 0.25), height: Math.round(h * 0.08) }, expansion:{ left: Math.round(w * 0.65), top: Math.round(h * 0.88), width: Math.round(w * 0.25), height: Math.round(h * 0.05) }, };
+                if (regions.cardName) result.cardName = await runOCR(await sharp(imageBuffer).extract(regions.cardName).toBuffer(), 'Name');
+                if (regions.cost) result.cost = await runOCR(await sharp(imageBuffer).extract(regions.cost).toBuffer(), 'Cost');
+                if (regions.cardText) result.cardText = await runOCR(await sharp(imageBuffer).extract(regions.cardText).toBuffer(), 'Text');
+                if (regions.power) result.power = await runOCR(await sharp(imageBuffer).extract(regions.power).toBuffer(), 'Power');
+                if (regions.expansion) result.expansion = await runOCR(await sharp(imageBuffer).extract(regions.expansion).toBuffer(), 'Expansion');
+                analysisResults.push(result); console.log(`[Tesseract] Processed ${image.title}`);
+            } catch (imgError) { console.error(`[Tesseract] Image Err ${image.title}:`, imgError.message); analysisResults.push({ ...result, cardName: '*** IMG ERR ***' }); }
+        }
+        await worker.terminate(); worker = null; console.log('[Tesseract] Worker terminated.');
+        let csvContent = "ファイル名,カード名,コスト,テキスト,パワー,エキスパンション\n"; analysisResults.forEach(r => { csvContent += `"${r.filename}","${r.cardName}","${r.cost}","${r.cardText}","${r.power}","${r.expansion}"\n`; });
+        const fileName = `analysis_tesseract_${folderName}.csv`; const bom = '\uFEFF'; res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`); res.status(200).send(bom + csvContent); console.log(`[Tesseract] Sent CSV`);
+    } catch (error) { console.error(`[Tesseract] Error:`, error); if (worker) { try { await worker.terminate(); } catch (e) { console.error('Error terminating worker:', e);} } res.status(500).json({ message: '解析エラー発生' }); }
+});
 
 // --- サーバーの起動 ---
 app.listen(port, async () => {
