@@ -10,6 +10,8 @@
         #auth-status button { margin-left: 10px; background: #dc3545; color: white; border: none; }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" integrity="sha512-FaAQujRxLMvw+BkmGN3w7u9EdQQr1t0vQoY8KDh09+6SFaWSTe+KrT8oCWg25X91hytm5c5BTmiSGQejkraaZg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js" integrity="sha512-Eezs+g9Lq4TCCq0wae01s9PuNWzHYoCMkE97e2qdkYthpI0pzC3UGB03lgEHn2XM85hDOUF6qgqqszs+iXU4UA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style>
         body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
         hr { margin: 2em 0; }
@@ -20,10 +22,18 @@
         #uploadStatus { font-weight: bold; grid-column: span 3; }
         #csvDownloader { display: inline-block; padding: 8px 12px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; }
         #gallery-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
-        .gallery-column { border: 1px solid #eee; padding: 10px; border-radius: 8px; background: #fafafa; min-height: 200px; max-height: 400px; overflow-y: auto; }
+        .gallery-column { border: 1px solid #eee; padding: 10px; border-radius: 8px; background: #fafafa; min-height: 200px; max-height: 400px; overflow-y: hidden; }
+        .gallery-column h4 { margin-bottom: 10px; }
+        .gallery-column .list-content { max-height: 320px; overflow-y: auto; }
         .gallery-item { padding: 8px; border: 1px solid #ccc; border-radius: 5px; background-color: #f4f4f4; font-weight: bold; margin-bottom: 5px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
         .gallery-item.active { background-color: #007bff; color: white; border-color: #007bff; }
         .gallery-item span { flex-grow: 1; margin-right: 5px; font-size: 14px; word-break: break-all; }
+        
+        /* --- ▼▼▼ 並び替え機能のためのCSS ▼▼▼ --- */
+        .gallery-item.dragging-item { opacity: 0.5; background: #cce5ff; } /* ドラッグ中のスタイル */
+        #folder-container .gallery-item { cursor: move; } /* フォルダのみカーソル変更 */
+        /* --- ▲▲▲ 並び替え機能のためのCSS ▲▲▲ --- */
+
         .action-buttons { display: flex; gap: 3px; flex-shrink: 0; }
         .analyze-btn, .edit-btn, .delete-btn { border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-weight: bold; line-height: 20px; text-align: center; color: white; font-size: 12px; }
         .analyze-btn { background: #17a2b8; } .analyze-btn:hover { background: #138496; }
@@ -68,12 +78,26 @@
     </div><hr>
     <h3>履歴のダウンロード</h3><p>現在選択中の**フォルダ**のCSVをダウンロードします。</p><a href="#" id="csvDownloader" style="visibility: hidden;">CSVダウンロード</a> <span id="csv-status-text">(フォルダ選択で有効化)</span> <span id="analyzeStatus"></span> <hr>
     <h3>階層別 ギャラリー</h3><p>大 → 中 → 小 → フォルダ の順に選択。(A:解析 E:編集 X:削除)</p>
+    
     <div id="gallery-section">
-        <div id="cat1-container" class="gallery-column"><h4>大カテゴリ</h4><p class="loading-status">読込中...</p></div>
-        <div id="cat2-container" class="gallery-column"><h4>中カテゴリ</h4><p class="loading-status"></p></div>
-        <div id="cat3-container" class="gallery-column"><h4>小カテゴリ</h4><p class="loading-status"></p></div>
-        <div id="folder-container" class="gallery-column"><h4>フォルダ</h4><p class="loading-status"></p></div>
+        <div id="cat1-container" class="gallery-column">
+            <h4>大カテゴリ</h4>
+            <div class="list-content"><p class="loading-status">読込中...</p></div>
+        </div>
+        <div id="cat2-container" class="gallery-column">
+            <h4>中カテゴリ</h4>
+            <div class="list-content"><p class="loading-status"></p></div>
+        </div>
+        <div id="cat3-container" class="gallery-column">
+            <h4>小カテゴリ</h4>
+            <div class="list-content"><p class="loading-status"></p></div>
+        </div>
+        <div id="folder-container" class="gallery-column">
+            <h4>フォルダ</h4> 
+            <div class="list-content"><p class="loading-status"></p></div>
+        </div>
     </div>
+
     <div id="search-section" style="display: none;">
         <div> <label for="searchInput">画像検索:</label> <input type="search" id="searchInput" placeholder="ファイル名の一部..."> </div>
         <div id="sort-controls"> <label for="sortBy">並び替え:</label> <select id="sortBy"> <option value="created_at" selected>アップロード日</option> <option value="title">ファイル名</option> </select> <select id="sortOrder"> <option value="DESC" selected>新しい順 / 降順(Z-A)</option> <option value="ASC">古い順 / 昇順(A-Z)</option> </select> </div>
@@ -99,8 +123,10 @@
         const analyzeStatus = document.getElementById('analyzeStatus');
         const sortBySelect = document.getElementById('sortBy');
         const sortOrderSelect = document.getElementById('sortOrder');
+        
         let selections = { cat1: null, cat2: null, cat3: null, folder: null };
         let lightbox;
+        let folderSortableInstance = null; // ★ フォルダのSortableインスタンスを保持する変数
 
         // --- ドラッグ＆ドロップ イベントリスナー ---
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
@@ -128,42 +154,35 @@
         });
 
         // --- ギャラリー機能 ---
-        // ▼ 認証機能 (DOMContentLoaded の修正) ▼
         document.addEventListener('DOMContentLoaded', async () => {
-            // 1. ログイン状態をチェック
             try {
                 const response = await fetch('/api/auth/check');
                 const authData = await response.json();
-
                 if (authData.loggedIn) {
-                    // 2. ログイン済み -> ユーザー名を表示し、アプリを初期化
                     document.getElementById('username-display').textContent = `ようこそ, ${authData.username} さん`;
-                    loadCat1(); // メインの処理を開始
+                    loadCat1(); 
                     setupSelectListeners();
                     setupSortListeners();
-                    setupLogoutButton(); // ログアウトボタンの設定
+                    setupLogoutButton();
                 } else {
-                    // 3. 未ログイン -> ログインページへリダイレクト
                     window.location.href = '/login';
                 }
             } catch (error) {
-                window.location.href = '/login'; // エラー時もログインへ
+                window.location.href = '/login';
             }
         });
 
-        // Select要素の選択肢生成
+        // --- Select関連 ---
         function populateSelect(selectElement, items, currentSelection) {
             selectElement.innerHTML = '<option value="">--- 選択 ---</option>';
             items.forEach(item => { const option = document.createElement('option'); option.value = item; option.text = item; if (item === currentSelection) option.selected = true; selectElement.appendChild(option); });
             const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption);
         }
-        // Select変更イベント設定
         function setupSelectListeners() {
             cat1Select.addEventListener('change', () => handleSelectChange(cat1Select, cat1NewInput, 1));
             cat2Select.addEventListener('change', () => handleSelectChange(cat2Select, cat2NewInput, 2));
             cat3Select.addEventListener('change', () => handleSelectChange(cat3Select, cat3NewInput, 3));
         }
-        // Select変更共通処理
         function handleSelectChange(selectElement, newInputElement, level) {
             const value = selectElement.value;
             if (value === '_new_') {
@@ -175,36 +194,58 @@
                 if (level === 2 && value && cat1Select.value && cat1Select.value !== '_new_') { loadCat3Options(cat1Select.value, value); }
             }
         }
-        // アップロードUIリセット
         function resetUploadUI(startLevel, createOnly = false){
              if (startLevel <= 2) { resetAndAddCreateOption(cat2Select); cat2NewInput.style.display='none'; cat2NewInput.value=''; }
              if (startLevel <= 3) { resetAndAddCreateOption(cat3Select); cat3NewInput.style.display='none'; cat3NewInput.value=''; }
         }
-        // Selectをリセットして「新規作成」だけを追加
         function resetAndAddCreateOption(selectElement) { selectElement.innerHTML = '<option value="">---</option>'; const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption); }
 
         // --- 階層リスト読み込み ---
-        async function loadCat1() { resetUI(1); resetUploadUI(1); await loadList('/api/cat1', cat1Container, '大カテゴリ', (n) => { selections.cat1 = n; loadCat2(n); cat1Select.value = n; handleSelectChange(cat1Select, cat1NewInput, 1); }, true, 1); await loadCat1Options(); }
+        async function loadCat1() { resetUI(1); resetUploadUI(1); const listContent = cat1Container.querySelector('.list-content'); await loadList('/api/cat1', listContent, '大カテゴリ', (n) => { selections.cat1 = n; loadCat2(n); cat1Select.value = n; handleSelectChange(cat1Select, cat1NewInput, 1); }, true, 1); await loadCat1Options(); }
         async function loadCat1Options(){ try { const r=await fetch('/api/cat1'); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat1Select, i, selections.cat1); } catch(e){ console.error("Cat1 opt err:", e); cat1Select.innerHTML='<option value="">失敗</option>'; } }
-        async function loadCat2(c1) { resetUI(2); resetUploadUI(2); await loadList(`/api/cat2/${encodeURIComponent(c1)}`, cat2Container, '中カテゴリ', (n) => { selections.cat2 = n; loadCat3(c1, n); cat2Select.value = n; handleSelectChange(cat2Select, cat2NewInput, 2); }, true, 2); await loadCat2Options(c1); }
+        async function loadCat2(c1) { resetUI(2); resetUploadUI(2); const listContent = cat2Container.querySelector('.list-content'); await loadList(`/api/cat2/${encodeURIComponent(c1)}`, listContent, '中カテゴリ', (n) => { selections.cat2 = n; loadCat3(c1, n); cat2Select.value = n; handleSelectChange(cat2Select, cat2NewInput, 2); }, true, 2); await loadCat2Options(c1); }
         async function loadCat2Options(c1){ try { const r=await fetch(`/api/cat2/${encodeURIComponent(c1)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat2Select, i, selections.cat2); } catch(e){ console.error("Cat2 opt err:", e); cat2Select.innerHTML=''; } }
-        async function loadCat3(c1, c2) { resetUI(3); resetUploadUI(3); await loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`, cat3Container, '小カテゴリ', (n) => { selections.cat3 = n; loadFolders(c1, c2, n); cat3Select.value = n; handleSelectChange(cat3Select, cat3NewInput, 3); }, true, 3); await loadCat3Options(c1, c2); }
+        async function loadCat3(c1, c2) { resetUI(3); resetUploadUI(3); const listContent = cat3Container.querySelector('.list-content'); await loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`, listContent, '小カテゴリ', (n) => { selections.cat3 = n; loadFolders(c1, c2, n); cat3Select.value = n; handleSelectChange(cat3Select, cat3NewInput, 3); }, true, 3); await loadCat3Options(c1, c2); }
         async function loadCat3Options(c1, c2){ try { const r=await fetch(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat3Select, i, selections.cat3); } catch(e){ console.error("Cat3 opt err:", e); cat3Select.innerHTML=''; } }
-        async function loadFolders(c1, c2, c3) { resetUI(4); await loadList(`/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`, folderContainer, 'フォルダ', (n) => { selections.folder = n; loadImages(n); folderInput.value = n; }, true, 4); }
+        
+        async function loadFolders(c1, c2, c3) { 
+            resetUI(4); 
+            // サーバー側 (server.js) の /api/folders API は、DBの sort_order 順に取得するようになっている
+            const apiUrl = `/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`;
+            const listContent = folderContainer.querySelector('.list-content');
+            await loadList(apiUrl, listContent, 'フォルダ', (n) => { selections.folder = n; loadImages(n); folderInput.value = n; }, true, 4); 
+        }
 
-        // 汎用リスト読み込み関数
+
+        // --- ▼▼▼ 汎用リスト読み込み関数 (SortableJS 初期化) ▼▼▼ ---
         async function loadList(apiUrl, container, title, onClickCallback, addActionButtons = false, level = 0) {
-            container.innerHTML = `<h4>${title}</h4><p class="loading-status">読込中...</p>`;
+            container.innerHTML = `<p class="loading-status">読込中...</p>`;
             try {
+                // フォルダリストを再読み込みする前に、古いSortableインスタンスを破棄する
+                if (level === 4 && folderSortableInstance) {
+                    folderSortableInstance.destroy();
+                    folderSortableInstance = null;
+                }
+                
                 const response = await fetch(apiUrl); 
-                if (response.status === 401) { throw new Error('401'); } // 認証エラー
+                if (response.status === 401) { throw new Error('401'); } 
+                if (response.status === 500) { throw new Error('HTTP 500'); } // ★ 500エラーを明示的にキャッチ
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const items = await response.json(); container.innerHTML = `<h4>${title}</h4>`;
-                if (items.length === 0) { container.innerHTML += '<p>データなし</p>'; return; }
+                const items = await response.json(); 
+                container.innerHTML = ''; 
+                
+                if (items.length === 0) { 
+                    container.innerHTML = '<p>データなし</p>'; 
+                    return; 
+                }
                 items.forEach(itemName => {
                     const itemDiv = document.createElement('div'); itemDiv.className = 'gallery-item';
                     const nameSpan = document.createElement('span'); nameSpan.innerText = itemName;
-                    nameSpan.addEventListener('click', () => { document.querySelectorAll(`#${container.id} .gallery-item`).forEach(el => el.classList.remove('active')); itemDiv.classList.add('active'); onClickCallback(itemName); });
+                    nameSpan.addEventListener('click', () => { 
+                        document.querySelectorAll('.gallery-item').forEach(el => el.classList.remove('active')); 
+                        itemDiv.classList.add('active'); 
+                        onClickCallback(itemName); 
+                    });
                     itemDiv.appendChild(nameSpan);
                     if (addActionButtons) {
                         const actionButtons = document.createElement('div'); actionButtons.className = 'action-buttons';
@@ -215,29 +256,67 @@
                     }
                     container.appendChild(itemDiv);
                 });
+                
+                // ★ Level 4 (フォルダ) のみ SortableJS を有効化
+                if (level === 4) {
+                    folderSortableInstance = new Sortable(container, {
+                        animation: 150,
+                        ghostClass: 'dragging-item', // ドラッグ中のスタイル (CSSで定義済み)
+                        onEnd: (evt) => {
+                            // ドラッグ終了時に並び順を保存
+                            saveFolderOrder(selections.cat1, selections.cat2, selections.cat3, container);
+                        }
+                    });
+                }
+
             } catch (error) { 
                 console.error(`${title}読み込みエラー:`, error); 
-                container.innerHTML = `<h4>${title}</h4><p style="color: red;">失敗</p>`; 
-                // ▼ 認証機能 (401エラーチェック) ▼
+                container.innerHTML = `<p style="color: red;">失敗</p>`; 
                 if (error.message.includes("401")) {
                     alert("セッションが切れました。再度ログインしてください。");
                     window.location.href = '/login';
                 }
-                // ▲ 認証機能 ▲
             }
         }
+        // --- ▲▲▲ 汎用リスト読み込み関数 (SortableJS 初期化) ▲▲▲ ---
 
-        // UIリセット関数
-        function resetUI(startLevel) { if (startLevel <= 1) { selections.cat1 = null; cat2Container.innerHTML = '<h4>中カテゴリ</h4>'; } if (startLevel <= 2) { selections.cat2 = null; cat3Container.innerHTML = '<h4>小カテゴリ</h4>'; } if (startLevel <= 3) { selections.cat3 = null; folderContainer.innerHTML = '<h4>フォルダ</h4>'; } if (startLevel <= 4) { selections.folder = null; galleryContainer.innerHTML = ''; searchSection.style.display = 'none'; searchInput.value = ''; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; analyzeStatus.innerText = ''; } }
-        // 画像読み込みトリガー
+
+        function resetUI(startLevel) { 
+            if (startLevel <= 1) { 
+                selections.cat1 = null; 
+                cat1Container.querySelector('.list-content').innerHTML = ''; 
+            } 
+            if (startLevel <= 2) { 
+                selections.cat2 = null; 
+                cat2Container.querySelector('.list-content').innerHTML = ''; 
+            } 
+            if (startLevel <= 3) { 
+                selections.cat3 = null; 
+                if (folderSortableInstance) { // Sortableインスタンスも破棄
+                    folderSortableInstance.destroy();
+                    folderSortableInstance = null;
+                }
+                folderContainer.querySelector('.list-content').innerHTML = ''; 
+            } 
+            if (startLevel <= 4) { 
+                selections.folder = null; galleryContainer.innerHTML = ''; searchSection.style.display = 'none'; searchInput.value = ''; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; analyzeStatus.innerText = ''; 
+            } 
+        }
+
         async function loadImages(folderName) { selections.folder = folderName; searchInput.value = ''; searchSection.style.display = 'flex'; const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(folderName, '', sortBy, sortOrder); }
-        // 検索イベントリスナー
         let searchTimeout; searchInput.addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }, 300); });
-        // 並び替えイベントリスナー
-        function setupSortListeners() { sortBySelect.addEventListener('change', handleSortChange); sortOrderSelect.addEventListener('change', handleSortChange); }
-        async function handleSortChange() { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }
+        
+        function setupSortListeners() { 
+            sortBySelect.addEventListener('change', handleSortChange); 
+            sortOrderSelect.addEventListener('change', handleSortChange); 
+        } 
+        async function handleSortChange() { 
+            if (selections.folder) { 
+                const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; 
+                await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); 
+            } 
+        }
 
-        // 画像取得・表示関数
         async function displayImages(folderName, searchTerm, sortBy = 'created_at', sortOrder = 'DESC') {
             try {
                 if (lightbox) { lightbox.destroy(); lightbox = null; }
@@ -265,13 +344,19 @@
                 if (error.message.includes("401")) { alert("セッションが切れました。再度ログインしてください。"); window.location.href = '/login'; }
             }
         }
-        // 削除関数
+        
+        // --- ▼▼▼ 削除関数 (server.js のAPI仕様に合わせ、クエリパラメータでカテゴリを送信) ▼▼▼ ---
         async function deleteItem(itemName, level) {
             let apiPath = ''; let confirmMsg = `「${itemName}」`; let refreshFunction = loadCat1;
             if (level === 1) { apiPath = `/api/cat1/${encodeURIComponent(itemName)}`; confirmMsg += ' (大)以下全て削除しますか？⚠⚠⚠'; }
             else if (level === 2 && selections.cat1) { apiPath = `/api/cat2/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(itemName)}`; confirmMsg += ' (中)以下全て削除しますか？⚠'; refreshFunction = () => loadCat2(selections.cat1); }
             else if (level === 3 && selections.cat1 && selections.cat2) { apiPath = `/api/cat3/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(itemName)}`; confirmMsg += ' (小)以下全て削除しますか？⚠'; refreshFunction = () => loadCat3(selections.cat1, selections.cat2); }
-            else if (level === 4) { apiPath = `/api/folder/${encodeURIComponent(itemName)}`; confirmMsg += ' (フォルダ)内の画像を削除しますか？⚠'; refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); }
+            else if (level === 4 && selections.cat1 && selections.cat2 && selections.cat3) { 
+                // server.js のフォルダ削除APIは クエリパラメータ (cat1, cat2, cat3) を要求する
+                apiPath = `/api/folder/${encodeURIComponent(itemName)}?cat1=${encodeURIComponent(selections.cat1)}&cat2=${encodeURIComponent(selections.cat2)}&cat3=${encodeURIComponent(selections.cat3)}`; 
+                confirmMsg += ' (フォルダ)内の画像を削除しますか？⚠'; 
+                refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); 
+            }
             else { return; }
             if (!confirm(confirmMsg)) return;
             try {
@@ -284,14 +369,20 @@
                 if (error.message.includes("401")) { alert("セッションが切れました。再度ログインしてください。"); window.location.href = '/login'; }
             }
         }
-        // 名前変更関数
+        // --- ▲▲▲ 削除関数 (APIパス修正) ▲▲▲ ---
+
+        // --- ▼▼▼ 名前変更関数 (server.js のAPI仕様に合わせ、クエリパラメータでカテゴリを送信) ▼▼▼ ---
         async function renameItem(oldItemName, level) {
             const newItemName = prompt(`「${oldItemName}」の新しい名前:`, oldItemName); if (!newItemName || newItemName.trim() === '' || newItemName.trim() === oldItemName) return;
             let apiPath = ''; let refreshFunction = loadCat1;
             if (level === 1) { apiPath = `/api/cat1/${encodeURIComponent(oldItemName)}`; }
             else if (level === 2 && selections.cat1) { apiPath = `/api/cat2/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadCat2(selections.cat1); }
             else if (level === 3 && selections.cat1 && selections.cat2) { apiPath = `/api/cat3/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadCat3(selections.cat1, selections.cat2); }
-            else if (level === 4) { apiPath = `/api/folder/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); }
+            else if (level === 4 && selections.cat1 && selections.cat2 && selections.cat3) { 
+                // server.js のフォルダ名変更APIは クエリパラメータ (cat1, cat2, cat3) を要求する
+                apiPath = `/api/folder/${encodeURIComponent(oldItemName)}?cat1=${encodeURIComponent(selections.cat1)}&cat2=${encodeURIComponent(selections.cat2)}&cat3=${encodeURIComponent(selections.cat3)}`; 
+                refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); 
+            }
             else { return; }
             try {
                 statusP.innerText = `変更中...`; statusP.style.color = 'blue';
@@ -304,7 +395,9 @@
                 if (error.message.includes("401")) { alert("セッションが切れました。再度ログインしてください。"); window.location.href = '/login'; }
             }
         }
-        // フォルダ解析関数
+        // --- ▲▲▲ 名前変更関数 (APIパス修正) ▲▲▲ ---
+
+        // 解析関数
         async function analyzeFolder(folderName) {
             analyzeStatus.innerText = `「${folderName}」解析中...`; analyzeStatus.style.color = '#17a2b8';
             try {
@@ -322,7 +415,56 @@
             }
         }
 
-        // --- ▼ 認証機能 (ログアウト処理) ▼ ---
+        // --- ▼▼▼ フォルダ並び替え保存関数 (★ 修正済み ★) ▼▼▼ ---
+        async function saveFolderOrder(c1, c2, c3, listContainerElement) {
+            const items = listContainerElement.querySelectorAll('.gallery-item span');
+            
+            // サーバー(server.js)は { folder_name: "...", order: 0 } の配列を期待している
+            const orderedFolders = Array.from(items).map((span, index) => ({
+                folder_name: span.innerText,
+                order: index // 0から始まるインデックスを並び順として使用
+            }));
+            
+            statusP.innerText = '並び順を保存中...';
+            statusP.style.color = 'blue';
+
+            try {
+                const response = await fetch('/api/folders/reorder', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    // サーバー(server.js)が期待するキー名 (cat1, cat2, cat3) と
+                    // 期待する配列 (orderedFolders) を送信する
+                    body: JSON.stringify({
+                        cat1: c1,
+                        cat2: c2,
+                        cat3: c3,
+                        orderedFolders: orderedFolders 
+                    })
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.message || `HTTP ${response.status}`);
+                }
+                
+                statusP.innerText = data.message;
+                statusP.style.color = 'green';
+
+            } catch (error) {
+                console.error('並び順 保存エラー:', error);
+                statusP.innerText = `保存失敗: ${error.message}`;
+                statusP.style.color = 'red';
+                if (error.message.includes("401")) {
+                    alert("セッションが切れました。再度ログインしてください。");
+                    window.location.href = '/login';
+                }
+                // エラーが発生した場合、ドラッグ操作を元に戻すためリストを再読み込みする
+                loadFolders(c1, c2, c3);
+            }
+        }
+        // --- ▲▲▲ フォルダ並び替え保存関数 (★ 修正済み ★) ▲▲▲ ---
+
+        // --- 認証機能 (ログアウト処理) ---
         function setupLogoutButton() {
             document.getElementById('logoutButton').addEventListener('click', async () => {
                 try {
