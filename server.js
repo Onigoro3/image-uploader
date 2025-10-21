@@ -90,22 +90,51 @@ const upload = multer({
 // ★ メインページ ( / ) - 誰でもアクセス可能
 app.get('/', (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
 
-// アップロードAPI (/upload)
+// ==================================================================
+// ▼▼▼ 修正済みのアップロードAPI (/upload) ▼▼▼
+// ==================================================================
 app.post('/upload', upload.array('imageFiles', 100), async (req, res) => {
     const { category1, category2, category3, folderName } = req.body;
     if (!category1 || !category2 || !category3 || !folderName ) { return res.status(400).json({ message: '全カテゴリ・フォルダ名必須' }); }
     if (!req.files || req.files.length === 0) { return res.status(400).json({ message: 'ファイル未選択' }); }
     const cat1Trimmed = category1.trim(); const cat2Trimmed = category2.trim(); const cat3Trimmed = category3.trim(); const folderNameTrimmed = folderName.trim();
+
     try {
-        const insertPromises = [];
+        // --- ▼ここから修正 (バルクインサート)▼ ---
+
+        const values = []; // (値のプレースホルダ ($1, $2, ...) を貯める配列)
+        const params = []; // (実際の値を貯める配列)
+        let paramIndex = 1; // (プレースホルダのインデックス)
+
         for (const file of req.files) {
-            const targetFilename = file.key; const targetUrl = `${r2PublicUrl}/${encodeURIComponent(targetFilename)}`; 
-            insertPromises.push(pool.query( `INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) VALUES ($1, $2, $3, $4, $5, $6)`, [targetFilename, targetUrl, cat1Trimmed, cat2Trimmed, cat3Trimmed, folderNameTrimmed] ));
+            const targetFilename = file.key;
+            const targetUrl = `${r2PublicUrl}/${encodeURIComponent(targetFilename)}`;
+            
+            // VALUES ($1, $2, $3, $4, $5, $6), ($7, $8, ...) の形を作る
+            values.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+            
+            // パラメータ配列に実際の値を追加
+            params.push(targetFilename, targetUrl, cat1Trimmed, cat2Trimmed, cat3Trimmed, folderNameTrimmed);
         }
-        await Promise.all(insertPromises);
+
+        // 1つの巨大なINSERTクエリを組み立てる
+        const queryText = `
+            INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) 
+            VALUES ${values.join(', ')}
+        `;
+
+        // 1回のクエリで全データを挿入
+        await pool.query(queryText, params);
+        
+        // --- ▲ここまで修正 (バルクインサート)▲ ---
+
         res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件を元のファイル名で保存しました。` });
     } catch (error) { console.error('[Upload V3] Error during processing:', error); res.status(500).json({ message: 'ファイル処理エラー' }); }
 });
+// ==================================================================
+// ▲▲▲ 修正済みのアップロードAPI (/upload) ▲▲▲
+// ==================================================================
+
 
 // CSV API (/download-csv)
 app.get('/download-csv', async (req, res) => {
