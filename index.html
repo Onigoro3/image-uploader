@@ -29,10 +29,10 @@
         .gallery-item.active { background-color: #007bff; color: white; border-color: #007bff; }
         .gallery-item span { flex-grow: 1; margin-right: 5px; font-size: 14px; word-break: break-all; }
         
-        /* --- ▼▼▼ 並び替え機能のためのCSS ▼▼▼ --- */
-        .gallery-item.dragging-item { opacity: 0.5; background: #cce5ff; } /* ドラッグ中のスタイル */
+        /* --- ▼▼▼ ドラッグ中スタイルを新規追加 ▼▼▼ --- */
+        .gallery-item.dragging-item { opacity: 0.5; background: #cce5ff; }
         #folder-container .gallery-item { cursor: move; } /* フォルダのみカーソル変更 */
-        /* --- ▲▲▲ 並び替え機能のためのCSS ▲▲▲ --- */
+        /* --- ▲▲▲ ドラッグ中スタイルを新規追加 ▲▲▲ --- */
 
         .action-buttons { display: flex; gap: 3px; flex-shrink: 0; }
         .analyze-btn, .edit-btn, .delete-btn { border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-weight: bold; line-height: 20px; text-align: center; color: white; font-size: 12px; }
@@ -210,7 +210,6 @@
         
         async function loadFolders(c1, c2, c3) { 
             resetUI(4); 
-            // サーバー側 (server.js) の /api/folders API は、DBの sort_order 順に取得するようになっている
             const apiUrl = `/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`;
             const listContent = folderContainer.querySelector('.list-content');
             await loadList(apiUrl, listContent, 'フォルダ', (n) => { selections.folder = n; loadImages(n); folderInput.value = n; }, true, 4); 
@@ -221,7 +220,6 @@
         async function loadList(apiUrl, container, title, onClickCallback, addActionButtons = false, level = 0) {
             container.innerHTML = `<p class="loading-status">読込中...</p>`;
             try {
-                // フォルダリストを再読み込みする前に、古いSortableインスタンスを破棄する
                 if (level === 4 && folderSortableInstance) {
                     folderSortableInstance.destroy();
                     folderSortableInstance = null;
@@ -261,7 +259,7 @@
                 if (level === 4) {
                     folderSortableInstance = new Sortable(container, {
                         animation: 150,
-                        ghostClass: 'dragging-item', // ドラッグ中のスタイル (CSSで定義済み)
+                        ghostClass: 'dragging-item', // ドラッグ中のスタイル
                         onEnd: (evt) => {
                             // ドラッグ終了時に並び順を保存
                             saveFolderOrder(selections.cat1, selections.cat2, selections.cat3, container);
@@ -345,15 +343,14 @@
             }
         }
         
-        // --- ▼▼▼ 削除関数 (server.js のAPI仕様に合わせ、クエリパラメータでカテゴリを送信) ▼▼▼ ---
+        // --- ▼▼▼ 削除関数 (APIパス修正) ▼▼▼ ---
         async function deleteItem(itemName, level) {
             let apiPath = ''; let confirmMsg = `「${itemName}」`; let refreshFunction = loadCat1;
             if (level === 1) { apiPath = `/api/cat1/${encodeURIComponent(itemName)}`; confirmMsg += ' (大)以下全て削除しますか？⚠⚠⚠'; }
             else if (level === 2 && selections.cat1) { apiPath = `/api/cat2/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(itemName)}`; confirmMsg += ' (中)以下全て削除しますか？⚠'; refreshFunction = () => loadCat2(selections.cat1); }
             else if (level === 3 && selections.cat1 && selections.cat2) { apiPath = `/api/cat3/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(itemName)}`; confirmMsg += ' (小)以下全て削除しますか？⚠'; refreshFunction = () => loadCat3(selections.cat1, selections.cat2); }
             else if (level === 4 && selections.cat1 && selections.cat2 && selections.cat3) { 
-                // server.js のフォルダ削除APIは クエリパラメータ (cat1, cat2, cat3) を要求する
-                apiPath = `/api/folder/${encodeURIComponent(itemName)}?cat1=${encodeURIComponent(selections.cat1)}&cat2=${encodeURIComponent(selections.cat2)}&cat3=${encodeURIComponent(selections.cat3)}`; 
+                apiPath = `/api/folder/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(selections.cat3)}/${encodeURIComponent(itemName)}`; 
                 confirmMsg += ' (フォルダ)内の画像を削除しますか？⚠'; 
                 refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); 
             }
@@ -371,7 +368,7 @@
         }
         // --- ▲▲▲ 削除関数 (APIパス修正) ▲▲▲ ---
 
-        // --- ▼▼▼ 名前変更関数 (server.js のAPI仕様に合わせ、クエリパラメータでカテゴリを送信) ▼▼▼ ---
+        // --- ▼▼▼ 名前変更関数 (APIパス修正) ▼▼▼ ---
         async function renameItem(oldItemName, level) {
             const newItemName = prompt(`「${oldItemName}」の新しい名前:`, oldItemName); if (!newItemName || newItemName.trim() === '' || newItemName.trim() === oldItemName) return;
             let apiPath = ''; let refreshFunction = loadCat1;
@@ -379,8 +376,7 @@
             else if (level === 2 && selections.cat1) { apiPath = `/api/cat2/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadCat2(selections.cat1); }
             else if (level === 3 && selections.cat1 && selections.cat2) { apiPath = `/api/cat3/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadCat3(selections.cat1, selections.cat2); }
             else if (level === 4 && selections.cat1 && selections.cat2 && selections.cat3) { 
-                // server.js のフォルダ名変更APIは クエリパラメータ (cat1, cat2, cat3) を要求する
-                apiPath = `/api/folder/${encodeURIComponent(oldItemName)}?cat1=${encodeURIComponent(selections.cat1)}&cat2=${encodeURIComponent(selections.cat2)}&cat3=${encodeURIComponent(selections.cat3)}`; 
+                apiPath = `/api/folder/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(selections.cat3)}/${encodeURIComponent(oldItemName)}`; 
                 refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); 
             }
             else { return; }
@@ -415,15 +411,10 @@
             }
         }
 
-        // --- ▼▼▼ フォルダ並び替え保存関数 (★ 修正済み ★) ▼▼▼ ---
+        // --- ▼▼▼ フォルダ並び替え保存関数を新規追加 ▼▼▼ ---
         async function saveFolderOrder(c1, c2, c3, listContainerElement) {
             const items = listContainerElement.querySelectorAll('.gallery-item span');
-            
-            // サーバー(server.js)は { folder_name: "...", order: 0 } の配列を期待している
-            const orderedFolders = Array.from(items).map((span, index) => ({
-                folder_name: span.innerText,
-                order: index // 0から始まるインデックスを並び順として使用
-            }));
+            const orderedFolderNames = Array.from(items).map(span => span.innerText);
             
             statusP.innerText = '並び順を保存中...';
             statusP.style.color = 'blue';
@@ -432,13 +423,11 @@
                 const response = await fetch('/api/folders/reorder', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    // サーバー(server.js)が期待するキー名 (cat1, cat2, cat3) と
-                    // 期待する配列 (orderedFolders) を送信する
                     body: JSON.stringify({
-                        cat1: c1,
-                        cat2: c2,
-                        cat3: c3,
-                        orderedFolders: orderedFolders 
+                        category1: c1,
+                        category2: c2,
+                        category3: c3,
+                        orderedFolderNames: orderedFolderNames
                     })
                 });
 
@@ -458,11 +447,10 @@
                     alert("セッションが切れました。再度ログインしてください。");
                     window.location.href = '/login';
                 }
-                // エラーが発生した場合、ドラッグ操作を元に戻すためリストを再読み込みする
                 loadFolders(c1, c2, c3);
             }
         }
-        // --- ▲▲▲ フォルダ並び替え保存関数 (★ 修正済み ★) ▲▲▲ ---
+        // --- ▲▲▲ フォルダ並び替え保存関数を新規追加 ▲▲▲ ---
 
         // --- 認証機能 (ログアウト処理) ---
         function setupLogoutButton() {
