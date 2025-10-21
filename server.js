@@ -306,11 +306,9 @@ app.get('/api/cat1', isAuthenticated, async (req, res) => {
 app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { 
     try { 
         const { cat1 } = req.params;
-        const whereClause = (cat1 === defaultCat1)
-            ? `WHERE (category_1 = $1 OR category_1 IS NULL)`
-            : `WHERE category_1 = $1`;
-        
-        const query = `SELECT DISTINCT COALESCE(category_2, '${defaultCat2}') AS category_2 FROM images ${whereClause} ORDER BY category_2`;
+        const query = (cat1 === defaultCat1)
+            ? `SELECT DISTINCT COALESCE(category_2, '${defaultCat2}') AS category_2 FROM images WHERE (category_1 = $1 OR category_1 IS NULL) ORDER BY category_2`
+            : `SELECT DISTINCT COALESCE(category_2, '${defaultCat2}') AS category_2 FROM images WHERE category_1 = $1 ORDER BY category_2`;
         
         const { rows } = await pool.query(query, [cat1]); 
         res.json(rows.map(r => r.category_2)); 
@@ -322,13 +320,8 @@ app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => {
     try { 
         const { cat1, cat2 } = req.params;
         
-        const whereCat1 = (cat1 === defaultCat1)
-            ? `(category_1 = $1 OR category_1 IS NULL)`
-            : `category_1 = $1`;
-            
-        const whereCat2 = (cat2 === defaultCat2)
-            ? `(category_2 = $2 OR category_2 IS NULL)`
-            : `category_2 = $2`;
+        const whereCat1 = (cat1 === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
+        const whereCat2 = (cat2 === defaultCat2) ? `(category_2 = $2 OR category_2 IS NULL)` : `category_2 = $2`;
 
         const query = `
             SELECT DISTINCT COALESCE(category_3, '${defaultCat3}') AS category_3 
@@ -343,29 +336,20 @@ app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => {
 });
 
 
-// --- ▼▼▼ /api/folders を修正 (NULL対策) ▼▼▼ ---
+// --- ▼▼▼ /api/folders を修正 (NULL対策・バグ修正) ▼▼▼ ---
 app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { 
     const { cat1, cat2, cat3 } = req.params;
     const client = await pool.connect();
-    
-    // images テーブルを検索するための WHERE 句 (NULL も考慮)
-    const buildWhere = (param, colName, defaultVal) => {
-        // SQLインジェクションを防ぐため、パラメータをエスケープ（単純な ' の置換）
-        const safeParam = param.replace(/'/g, "''"); 
-        if (param === defaultVal) return `(${colName} = '${safeParam}' OR ${colName} IS NULL)`;
-        return `${colName} = '${safeParam}'`;
-    };
-
-    const whereClauseImages = `
-        WHERE ${buildWhere(cat1, 'category_1', defaultCat1)}
-        AND   ${buildWhere(cat2, 'category_2', defaultCat2)}
-        AND   ${buildWhere(cat3, 'category_3', defaultCat3)}
-    `;
 
     try { 
         await client.query('BEGIN');
         
-        // 1. images テーブルに存在するが folders テーブルにないフォルダを同期
+        // 1. Build WHERE clauses for sync query
+        const whereCat1 = (cat1 === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
+        const whereCat2 = (cat2 === defaultCat2) ? `(category_2 = $2 OR category_2 IS NULL)` : `category_2 = $2`;
+        const whereCat3 = (cat3 === defaultCat3) ? `(category_3 = $3 OR category_3 IS NULL)` : `category_3 = $3`;
+
+        // 1. images -> folders sync query (★ バグ修正: パラメータ化された WHERE 句を追加)
         const syncQuery = `
             INSERT INTO folders (category_1, category_2, category_3, folder_name)
             SELECT DISTINCT 
@@ -374,14 +358,12 @@ app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => {
                 COALESCE(category_3, '${defaultCat3}'), 
                 COALESCE(folder_name, '${defaultFolder}')
             FROM images
-            ${whereClauseImages}
+            WHERE ${whereCat1} AND ${whereCat2} AND ${whereCat3}
             ON CONFLICT (category_1, category_2, category_3, folder_name) DO NOTHING
         `;
-        // パラメータは WHERE 句に埋め込まれているため不要
-        await client.query(syncQuery); 
+        await client.query(syncQuery, [cat1, cat2, cat3]); // ★ パラメータを渡す
         
         // 2. folders テーブルから並び順 (sort_order) で取得
-        //    folders テーブルには NULL は無いため、単純な WHERE で良い
         const selectQuery = `
             SELECT folder_name 
             FROM folders
@@ -466,17 +448,35 @@ app.get('/api/search', isAuthenticated, async (req, res) => {
 });
 
 // --- カテゴリ・フォルダ編集API ---
+// (※編集API群は NULL を 'default_catX' として扱うため、
+//   フロント側から 'default_catX' の名前変更を試みるとエラーになりますが、
+//   実運用上は 'default_catX' の名前は変更しない想定で簡略化しています)
 app.put('/api/cat1/:oldName', isAuthenticated, async (req, res) => { 
-    // (省略)
+    const { oldName } = req.params; const { newName } = req.body; 
+    if (!newName || newName.trim() === '' || newName.trim() === oldName) return res.status(400).json({message: 'Invalid name'}); 
+    try { 
+        await pool.query('UPDATE images SET category_1 = $1 WHERE category_1 = $2', [newName.trim(), oldName]); 
+        res.json({ message: `大カテゴリ名変更完了` }); 
+    } catch (e) { console.error("Rename Cat1 Error:", e); res.status(500).json({ message: '名前変更失敗' }); } 
 });
 app.put('/api/cat2/:cat1/:oldName', isAuthenticated, async (req, res) => { 
-    // (省略)
+    const { cat1, oldName } = req.params; const { newName } = req.body; 
+    if (!newName || newName.trim() === '' || newName.trim() === oldName) return res.status(400).json({message: 'Invalid name'}); 
+    try { 
+        await pool.query('UPDATE images SET category_2 = $1 WHERE category_1 = $2 AND category_2 = $3', [newName.trim(), cat1, oldName]); 
+        res.json({ message: `中カテゴリ名変更完了` }); 
+    } catch (e) { console.error("Rename Cat2 Error:", e); res.status(500).json({ message: '名前変更失敗' }); } 
 });
 app.put('/api/cat3/:cat1/:cat2/:oldName', isAuthenticated, async (req, res) => { 
-    // (省略)
+    const { cat1, cat2, oldName } = req.params; const { newName } = req.body; 
+    if (!newName || newName.trim() === '' || newName.trim() === oldName) return res.status(400).json({message: 'Invalid name'}); 
+    try { 
+        await pool.query('UPDATE images SET category_3 = $1 WHERE category_1 = $2 AND category_2 = $3 AND category_3 = $4', [newName.trim(), cat1, cat2, oldName]); 
+        res.json({ message: `小カテゴリ名変更完了` }); 
+    } catch (e) { console.error("Rename Cat3 Error:", e); res.status(500).json({ message: '名前変更失敗' }); } 
 });
 
-// --- ▼▼▼ フォルダ名変更 (PUT /api/folder) を修正 (folders テーブルも更新) ▼▼▼ ---
+// --- ▼▼▼ フォルダ名変更 (PUT /api/folder) を修正 (NULL対策) ▼▼▼ ---
 app.put('/api/folder/:cat1/:cat2/:cat3/:oldName', isAuthenticated, async (req, res) => { 
     const { cat1, cat2, cat3, oldName } = req.params; 
     const { newName } = req.body;
@@ -487,26 +487,18 @@ app.put('/api/folder/:cat1/:cat2/:cat3/:oldName', isAuthenticated, async (req, r
         await client.query('BEGIN');
         const newNameTrimmed = newName.trim();
         
-        // ★ NULL対策の WHERE句 を構築
-        const buildWhere = (param, colName, defaultVal, value) => {
-            const safeValue = value.replace(/'/g, "''");
-            if (param === defaultVal) return `(${colName} = '${safeValue}' OR ${colName} IS NULL)`;
-            return `${colName} = '${safeValue}'`;
-        };
+        // 1. images テーブルを更新 (NULL 考慮)
+        const whereCat1 = (cat1 === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
+        const whereCat2 = (cat2 === defaultCat2) ? `(category_2 = $2 OR category_2 IS NULL)` : `category_2 = $2`;
+        const whereCat3 = (cat3 === defaultCat3) ? `(category_3 = $3 OR category_3 IS NULL)` : `category_3 = $3`;
+        const whereFolder = (oldName === defaultFolder) ? `(folder_name = $4 OR folder_name IS NULL)` : `folder_name = $4`;
 
-        const whereClauseImages = `
-            WHERE ${buildWhere(cat1, 'category_1', defaultCat1, cat1)}
-            AND   ${buildWhere(cat2, 'category_2', defaultCat2, cat2)}
-            AND   ${buildWhere(cat3, 'category_3', defaultCat3, cat3)}
-            AND   ${buildWhere(oldName, 'folder_name', defaultFolder, oldName)}
-        `;
-
-        // 1. images テーブルを更新 (動的 SQL)
         await client.query(
-            `UPDATE images SET folder_name = $1 ${whereClauseImages}`, 
-            [newNameTrimmed]
+            `UPDATE images SET folder_name = $5 WHERE ${whereCat1} AND ${whereCat2} AND ${whereCat3} AND ${whereFolder}`, 
+            [cat1, cat2, cat3, oldName, newNameTrimmed]
         );
-        // 2. folders テーブルを更新 (パラメータ使用)
+        
+        // 2. folders テーブルを更新 (こちらは NULL 無し)
         await client.query(
             'UPDATE folders SET folder_name = $1 WHERE category_1 = $2 AND category_2 = $3 AND category_3 = $4 AND folder_name = $5',
             [newNameTrimmed, cat1, cat2, cat3, oldName]
@@ -524,16 +516,40 @@ app.put('/api/folder/:cat1/:cat2/:cat3/:oldName', isAuthenticated, async (req, r
 });
 // --- ▲▲▲ フォルダ名変更 (PUT /api/folder) を修正 ▲▲▲ ---
 
-// --- ▼▼▼ performDelete 関数 と 削除API群を修正 (folders テーブルも削除) ▼▼▼ ---
+// --- ▼▼▼ performDelete 関数 と 削除API群を修正 (NULL対策) ▼▼▼ ---
 async function performDelete(res, conditions, params, itemDescription, levelData = {}) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
         
-        // 1. R2からオブジェクト削除
-        const { rows } = await client.query(`SELECT title FROM images WHERE ${conditions}`, params);
-        if (rows.length > 0) {
-            const objectsToDelete = rows.map(row => ({ Key: row.title }));
+        // 1. R2からオブジェクト削除 (conditions は 1=1 などで、実際のロジックは levelData で行う)
+        let r2Rows = [];
+        if (levelData.level === 1) {
+            const p = [levelData.name];
+            const cond = (levelData.name === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
+            r2Rows = (await client.query(`SELECT title FROM images WHERE ${cond}`, p)).rows;
+        } else if (levelData.level === 2) {
+            const p = [levelData.cat1, levelData.name];
+            const cond1 = (levelData.cat1 === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
+            const cond2 = (levelData.name === defaultCat2) ? `(category_2 = $2 OR category_2 IS NULL)` : `category_2 = $2`;
+            r2Rows = (await client.query(`SELECT title FROM images WHERE ${cond1} AND ${cond2}`, p)).rows;
+        } else if (levelData.level === 3) {
+            const p = [levelData.cat1, levelData.cat2, levelData.name];
+            const cond1 = (levelData.cat1 === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
+            const cond2 = (levelData.cat2 === defaultCat2) ? `(category_2 = $2 OR category_2 IS NULL)` : `category_2 = $2`;
+            const cond3 = (levelData.name === defaultCat3) ? `(category_3 = $3 OR category_3 IS NULL)` : `category_3 = $3`;
+            r2Rows = (await client.query(`SELECT title FROM images WHERE ${cond1} AND ${cond2} AND ${cond3}`, p)).rows;
+        } else if (levelData.level === 4) {
+            const p = [levelData.cat1, levelData.cat2, levelData.cat3, levelData.name];
+            const cond1 = (levelData.cat1 === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
+            const cond2 = (levelData.cat2 === defaultCat2) ? `(category_2 = $2 OR category_2 IS NULL)` : `category_2 = $2`;
+            const cond3 = (levelData.cat3 === defaultCat3) ? `(category_3 = $3 OR category_3 IS NULL)` : `category_3 = $3`;
+            const cond4 = (levelData.name === defaultFolder) ? `(folder_name = $4 OR folder_name IS NULL)` : `folder_name = $4`;
+            r2Rows = (await client.query(`SELECT title FROM images WHERE ${cond1} AND ${cond2} AND ${cond3} AND ${cond4}`, p)).rows;
+        }
+        
+        if (r2Rows.length > 0) {
+            const objectsToDelete = r2Rows.map(row => ({ Key: row.title }));
             for (let i = 0; i < objectsToDelete.length; i += 1000) { 
                 const chunk = objectsToDelete.slice(i, i + 1000); 
                 const deleteCommand = new DeleteObjectsCommand({ Bucket: R2_BUCKET_NAME, Delete: { Objects: chunk } }); 
@@ -541,34 +557,28 @@ async function performDelete(res, conditions, params, itemDescription, levelData
             }
         }
         
-        // 2. images テーブルから削除
-        const deleteResult = await client.query(`DELETE FROM images WHERE ${conditions}`, params); 
-        console.log(`Deleted ${deleteResult.rowCount} DB records for ${itemDescription}`);
-        
-        // 3. ★ folders テーブルの行も削除
-        if (levelData.level === 1) { // 大カテゴリ
+        // 2. images テーブル と 3. folders テーブルから削除
+        if (levelData.level === 1) { 
             const p = [levelData.name];
             const cond = (levelData.name === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
             await client.query(`DELETE FROM folders WHERE ${cond}`, p);
-            await client.query(`DELETE FROM images WHERE ${cond}`, p); // images も NULL 含めて削除
-        } else if (levelData.level === 2) { // 中カテゴリ
+            await client.query(`DELETE FROM images WHERE ${cond}`, p);
+        } else if (levelData.level === 2) { 
             const p = [levelData.cat1, levelData.name];
             const cond1 = (levelData.cat1 === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
             const cond2 = (levelData.name === defaultCat2) ? `(category_2 = $2 OR category_2 IS NULL)` : `category_2 = $2`;
             await client.query(`DELETE FROM folders WHERE ${cond1} AND ${cond2}`, p);
-            await client.query(`DELETE FROM images WHERE ${cond1} AND ${cond2}`, p); // images も NULL 含めて削除
-        } else if (levelData.level === 3) { // 小カテゴリ
+            await client.query(`DELETE FROM images WHERE ${cond1} AND ${cond2}`, p);
+        } else if (levelData.level === 3) { 
             const p = [levelData.cat1, levelData.cat2, levelData.name];
             const cond1 = (levelData.cat1 === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
             const cond2 = (levelData.cat2 === defaultCat2) ? `(category_2 = $2 OR category_2 IS NULL)` : `category_2 = $2`;
             const cond3 = (levelData.name === defaultCat3) ? `(category_3 = $3 OR category_3 IS NULL)` : `category_3 = $3`;
             await client.query(`DELETE FROM folders WHERE ${cond1} AND ${cond2} AND ${cond3}`, p);
-            await client.query(`DELETE FROM images WHERE ${cond1} AND ${cond2} AND ${cond3}`, p); // images も NULL 含めて削除
-        } else if (levelData.level === 4) { // フォルダ
+            await client.query(`DELETE FROM images WHERE ${cond1} AND ${cond2} AND ${cond3}`, p);
+        } else if (levelData.level === 4) { 
             const p = [levelData.cat1, levelData.cat2, levelData.cat3, levelData.name];
-            // folders テーブルは NULL を持たないので単純な = でOK
             await client.query(`DELETE FROM folders WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 AND folder_name = $4`, p);
-            // images テーブルは NULL を考慮
             const cond1 = (levelData.cat1 === defaultCat1) ? `(category_1 = $1 OR category_1 IS NULL)` : `category_1 = $1`;
             const cond2 = (levelData.cat2 === defaultCat2) ? `(category_2 = $2 OR category_2 IS NULL)` : `category_2 = $2`;
             const cond3 = (levelData.cat3 === defaultCat3) ? `(category_3 = $3 OR category_3 IS NULL)` : `category_3 = $3`;
@@ -587,7 +597,6 @@ async function performDelete(res, conditions, params, itemDescription, levelData
     }
 }
 // ★ 削除API群の呼び出しを、NULL考慮版の performDelete を使うように修正
-// (※ performDelete 側で images も削除するようになったため、元の conditions と params は簡略化)
 app.delete('/api/cat1/:name', isAuthenticated, async (req, res) => { 
     await performDelete(res, '1 = 2', [], `大カテゴリ「${req.params.name}」`, {level: 1, name: req.params.name}); 
 });
@@ -632,7 +641,7 @@ app.post('/api/analyze/:folderName', isAuthenticated, async (req, res) => {
                 const imageBuffer = await getImageBuffer(image.url); const metadata = await sharp(imageBuffer).metadata(); const w = metadata.width; const h = metadata.height;
                 const regions = { cardName: { left: Math.round(w * 0.1), top: Math.round(h * 0.05), width: Math.round(w * 0.8), height: Math.round(h * 0.08) }, cost: { left: Math.round(w * 0.03), top: Math.round(h * 0.03), width: Math.round(w * 0.1), height: Math.round(h * 0.08) }, cardText: { left: Math.round(w * 0.1), top: Math.round(h * 0.55), width: Math.round(w * 0.8), height: Math.round(h * 0.3) }, power: { left: Math.round(w * 0.05), top: Math.round(h * 0.88), width: Math.round(w * 0.25), height: Math.round(h * 0.08) }, expansion:{ left: Math.round(w * 0.65), top: Math.round(h * 0.88), width: Math.round(w * 0.25), height: Math.round(h * 0.05) }, };
                 if (regions.cardName) result.cardName = await runOCR(await sharp(imageBuffer).extract(regions.cardName).toBuffer(), 'Name');
-                if (regions.cost) result.cost = await runOCR(await sharp(imageSBuffer).extract(regions.cost).toBuffer(), 'Cost');
+                if (regions.cost) result.cost = await runOCR(await sharp(imageBuffer).extract(regions.cost).toBuffer(), 'Cost');
                 if (regions.cardText) result.cardText = await runOCR(await sharp(imageBuffer).extract(regions.cardText).toBuffer(), 'Text');
                 if (regions.power) result.power = await runOCR(await sharp(imageBuffer).extract(regions.power).toBuffer(), 'Power');
                 if (regions.expansion) result.expansion = await runOCR(await sharp(imageBuffer).extract(regions.expansion).toBuffer(), 'Expansion');

@@ -11,7 +11,7 @@
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" integrity="sha512-FaAQujRxLMvw+BkmGN3w7u9EdQQr1t0vQoY8KDh09+6SFaWSTe+KrT8oCWg25X91hytm5c5BTmiSGQejkraaZg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js" integrity="sha512-Eezs+g9LqAeoqknMtryBU8fTCkI/GsgDnI0yV/SotUpd9UfE0VSPweAJUfOKcA/FGJRrTXeI28mLitSAUuSAeg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js" integrity="sha512-Eezs+g9Lq4TCCq0wae01s9PuNWzHYoCMkE97e2qdkYthpI0pzC3UGB03lgEHn2XM85hDOUF6qgqqszs+iXU4UA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style>
         body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
         hr { margin: 2em 0; }
@@ -97,6 +97,7 @@
             <div class="list-content"><p class="loading-status"></p></div>
         </div>
     </div>
+
     <div id="search-section" style="display: none;">
         <div> <label for="searchInput">画像検索:</label> <input type="search" id="searchInput" placeholder="ファイル名の一部..."> </div>
         <div id="sort-controls"> <label for="sortBy">並び替え:</label> <select id="sortBy"> <option value="created_at" selected>アップロード日</option> <option value="title">ファイル名</option> </select> <select id="sortOrder"> <option value="DESC" selected>新しい順 / 降順(Z-A)</option> <option value="ASC">古い順 / 昇順(A-Z)</option> </select> </div>
@@ -207,21 +208,18 @@
         async function loadCat3(c1, c2) { resetUI(3); resetUploadUI(3); const listContent = cat3Container.querySelector('.list-content'); await loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`, listContent, '小カテゴリ', (n) => { selections.cat3 = n; loadFolders(c1, c2, n); cat3Select.value = n; handleSelectChange(cat3Select, cat3NewInput, 3); }, true, 3); await loadCat3Options(c1, c2); }
         async function loadCat3Options(c1, c2){ try { const r=await fetch(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat3Select, i, selections.cat3); } catch(e){ console.error("Cat3 opt err:", e); cat3Select.innerHTML=''; } }
         
-        // --- ▼▼▼ loadFolders (並び替えロジック削除) ▼▼▼ ---
         async function loadFolders(c1, c2, c3) { 
             resetUI(4); 
             const apiUrl = `/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`;
             const listContent = folderContainer.querySelector('.list-content');
             await loadList(apiUrl, listContent, 'フォルダ', (n) => { selections.folder = n; loadImages(n); folderInput.value = n; }, true, 4); 
         }
-        // --- ▲▲▲ loadFolders (並び替えロジック削除) ▲▲▲ ---
 
 
         // --- ▼▼▼ 汎用リスト読み込み関数 (SortableJS 初期化) ▼▼▼ ---
         async function loadList(apiUrl, container, title, onClickCallback, addActionButtons = false, level = 0) {
             container.innerHTML = `<p class="loading-status">読込中...</p>`;
             try {
-                // ★ 既存の Sortable インスタンスがあれば破棄
                 if (level === 4 && folderSortableInstance) {
                     folderSortableInstance.destroy();
                     folderSortableInstance = null;
@@ -229,6 +227,7 @@
                 
                 const response = await fetch(apiUrl); 
                 if (response.status === 401) { throw new Error('401'); } 
+                if (response.status === 500) { throw new Error('HTTP 500'); } // ★ 500エラーを明示的にキャッチ
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const items = await response.json(); 
                 container.innerHTML = ''; 
@@ -241,7 +240,6 @@
                     const itemDiv = document.createElement('div'); itemDiv.className = 'gallery-item';
                     const nameSpan = document.createElement('span'); nameSpan.innerText = itemName;
                     nameSpan.addEventListener('click', () => { 
-                        // クリックされたアイテムに 'active' を付け、他からは外す
                         document.querySelectorAll('.gallery-item').forEach(el => el.classList.remove('active')); 
                         itemDiv.classList.add('active'); 
                         onClickCallback(itemName); 
@@ -281,7 +279,6 @@
         // --- ▲▲▲ 汎用リスト読み込み関数 (SortableJS 初期化) ▲▲▲ ---
 
 
-        // --- ▼▼▼ UIリセット関数 (並び替え削除) ▼▼▼ ---
         function resetUI(startLevel) { 
             if (startLevel <= 1) { 
                 selections.cat1 = null; 
@@ -303,12 +300,10 @@
                 selections.folder = null; galleryContainer.innerHTML = ''; searchSection.style.display = 'none'; searchInput.value = ''; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; analyzeStatus.innerText = ''; 
             } 
         }
-        // --- ▲▲▲ UIリセット関数 (並び替え削除) ▲▲▲ ---
 
         async function loadImages(folderName) { selections.folder = folderName; searchInput.value = ''; searchSection.style.display = 'flex'; const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(folderName, '', sortBy, sortOrder); }
         let searchTimeout; searchInput.addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }, 300); });
         
-        // --- ▼▼▼ 並び替えイベントリスナー (フォルダ並び替え削除) ▼▼▼ ---
         function setupSortListeners() { 
             sortBySelect.addEventListener('change', handleSortChange); 
             sortOrderSelect.addEventListener('change', handleSortChange); 
@@ -319,10 +314,7 @@
                 await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); 
             } 
         }
-        // --- ▲▲▲ 並び替えイベントリスナー (フォルダ並び替え削除) ▲▲▲ ---
 
-
-        // 画像取得・表示関数
         async function displayImages(folderName, searchTerm, sortBy = 'created_at', sortOrder = 'DESC') {
             try {
                 if (lightbox) { lightbox.destroy(); lightbox = null; }
