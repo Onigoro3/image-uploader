@@ -405,6 +405,7 @@ app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { try { console.
 app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat3/${req.params.cat1}/${req.params.cat2} received`); const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); console.log(`[API] /api/cat3 found ${rows.length}`); res.json(rows.map(r => r.category_3)); } catch (e) { console.error("!!!!! API /api/cat3 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat3' }); } });
 
 // ▼▼▼ フォルダ並び替え機能 (API修正) ▼▼▼
+// (folder_metadata テーブルから sort_order 順に取得する)
 app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { 
     try { 
         console.log(`[API] /api/folders received`); 
@@ -432,10 +433,13 @@ app.put('/api/cat2/:cat1/:oldName', isAuthenticated, async (req, res) => { const
 app.put('/api/cat3/:cat1/:cat2/:oldName', isAuthenticated, async (req, res) => { const { cat1, cat2, oldName } = req.params; const { newName } = req.body; if (!newName || newName.trim() === '' || newName.trim() === oldName) return res.status(400).json({message: 'Invalid name'}); try { await pool.query('UPDATE images SET category_3 = $1 WHERE category_1 = $2 AND category_2 = $3 AND category_3 = $4', [newName.trim(), cat1, cat2, oldName]); res.json({ message: `小カテゴリ名変更完了` }); } catch (e) { console.error("Rename Cat3 Error:", e); res.status(500).json({ message: '名前変更失敗' }); } });
 
 // ▼▼▼ フォルダ並び替え機能 (フォルダ名変更API 修正) ▼▼▼
+// (folder_metadata テーブルも同時に更新する)
 app.put('/api/folder/:oldName', isAuthenticated, async (req, res) => { 
     const { oldName } = req.params; 
     const { newName } = req.body; 
-    const { cat1, cat2, cat3 } = req.query; // ★ JS側からクエリで cat1,2,3 を受け取る
+    
+    // ★ index.html から cat1, cat2, cat3 をクエリパラメータで受け取る
+    const { cat1, cat2, cat3 } = req.query; 
     const newNameTrimmed = (newName || '').trim();
     
     if (!newName || newNameTrimmed === '' || newNameTrimmed === oldName) return res.status(400).json({message: '無効な名前です'});
@@ -516,9 +520,12 @@ app.delete('/api/cat2/:cat1/:name', isAuthenticated, async (req, res) => { await
 app.delete('/api/cat3/:cat1/:cat2/:name', isAuthenticated, async (req, res) => { await performDelete(res, 'category_1 = $1 AND category_2 = $2 AND category_3 = $3', [req.params.cat1, req.params.cat2, req.params.name], `小カテゴリ「${req.params.name}」`); });
 
 // ▼▼▼ フォルダ並び替え機能 (フォルダ削除API 修正) ▼▼▼
+// (folder_metadata テーブルも同時に削除する)
 app.delete('/api/folder/:name', isAuthenticated, async (req, res) => { 
     const { name } = req.params;
-    const { cat1, cat2, cat3 } = req.query; // ★ JS側からクエリで cat1,2,3 を受け取る
+    
+    // ★ index.html から cat1, cat2, cat3 をクエリパラメータで受け取る
+    const { cat1, cat2, cat3 } = req.query; 
     if (!cat1 || !cat2 || !cat3) {
         return res.status(400).json({ message: 'カテゴリ指定(cat1, cat2, cat3)がクエリに必要です。' });
     }
@@ -607,9 +614,11 @@ app.post('/api/analyze/:folderName', isAuthenticated, async (req, res) => {
 });
 
 // ▼▼▼ フォルダ並び替え機能 (並び替えAPI) ▼▼▼
+// (index.html の saveFolderOrder 関数から呼び出される)
 app.post('/api/folders/reorder', isAuthenticated, async (req, res) => {
+    // index.html から { cat1: "...", cat2: "...", cat3: "...", orderedFolders: [ {folder_name: "A", order: 0}, {folder_name: "B", order: 1} ] }
+    // という形式のデータを受け取る
     const { cat1, cat2, cat3, orderedFolders } = req.body;
-    // orderedFolders は { folder_name: "...", order: 0 } の配列
 
     if (!cat1 || !cat2 || !cat3 || !Array.isArray(orderedFolders)) {
         return res.status(400).json({ message: 'カテゴリ指定とフォルダリスト配列が必要です。' });
@@ -619,18 +628,24 @@ app.post('/api/folders/reorder', isAuthenticated, async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // バルクアップデートのために CASE 文を構築
+        // バルクアップデート (一括更新) のために CASE 文を構築
         if (orderedFolders.length > 0) {
             const sortOrderUpdates = [];
             const folderNameParams = [];
-            let paramIndex = 4; // $1, $2, $3 は cat1, cat2, cat3 で使用
+            
+            // $1, $2, $3 は cat1, cat2, cat3 で使用
+            let paramIndex = 4; 
 
+            // orderedFolders 配列をループして、SQLのCASE文とパラメータ配列を作成
             orderedFolders.forEach(item => {
+                // "WHEN folder_name = $4 THEN $5" のようなSQL文の一部
                 sortOrderUpdates.push(`WHEN folder_name = $${paramIndex++} THEN $${paramIndex++}`);
+                // パラメータ配列に ["Fusion", 0] のように追加
                 folderNameParams.push(item.folder_name, item.order);
             });
 
-            const folderNamesList = orderedFolders.map(item => item.folder_name);
+            // "IN ($4, $6, $8, ...)" のようなSQL文の一部
+            const folderNamesList = orderedFolders.map((_, i) => `$${4 + i*2}`);
             
             const updateQuery = `
             UPDATE folder_metadata SET
@@ -639,11 +654,13 @@ app.post('/api/folders/reorder', isAuthenticated, async (req, res) => {
               category_1 = $1 
               AND category_2 = $2 
               AND category_3 = $3
-              AND folder_name IN (${folderNamesList.map((_, i) => `$${4 + i*2}`).join(', ')});
+              AND folder_name IN (${folderNamesList.join(', ')});
             `;
 
+            // 最終的なパラメータ配列 [cat1, cat2, cat3, "Fusion", 0, "Link", 1, ...]
             const queryParams = [cat1, cat2, cat3, ...folderNameParams];
             
+            // SQL実行
             await client.query(updateQuery, queryParams);
         }
 
