@@ -307,22 +307,29 @@ app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => {
     } catch (e) { console.error("!!!!! API /api/cat3 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat3' }); } 
 });
 
-// --- ▼▼▼ /api/folders を修正 (folders テーブルから取得) ▼▼▼ ---
+// --- ▼▼▼ /api/folders を修正 (NULL対策) ▼▼▼ ---
 app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { 
     const { cat1, cat2, cat3 } = req.params;
     const client = await pool.connect();
     try { 
         await client.query('BEGIN');
         
+        // 1. images テーブルに存在するが folders テーブルにないフォルダを同期
+        // ★ COALESCE を folder_name に追加し、NULL の場合に 'default_folder' を使う
         const syncQuery = `
             INSERT INTO folders (category_1, category_2, category_3, folder_name)
-            SELECT DISTINCT category_1, category_2, category_3, folder_name
+            SELECT DISTINCT 
+                category_1, 
+                category_2, 
+                category_3, 
+                COALESCE(folder_name, 'default_folder')
             FROM images
             WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3
             ON CONFLICT (category_1, category_2, category_3, folder_name) DO NOTHING
         `;
         await client.query(syncQuery, [cat1, cat2, cat3]);
         
+        // 2. folders テーブルから並び順 (sort_order) で取得
         const selectQuery = `
             SELECT folder_name 
             FROM folders
@@ -341,7 +348,7 @@ app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => {
         client.release();
     }
 });
-// --- ▲▲▲ /api/folders を修正 ▲▲▲ ---
+// --- ▲▲▲ /api/folders を修正 (NULL対策) ▲▲▲ ---
 
 // --- ▼▼▼ フォルダ並び替えAPIを新規追加 ▼▼▼ ---
 app.post('/api/folders/reorder', isAuthenticated, async (req, res) => {
