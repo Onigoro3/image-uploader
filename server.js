@@ -41,7 +41,6 @@ app.use(session({
     secret: process.env.SESSION_SECRET, // .env ファイルに SESSION_SECRET=... を追加してください
     resave: false,
     saveUninitialized: false,
-    // --- ▼▼▼ ログインループ対策の修正箇所 ▼▼▼ ---
     proxy: true, // Render/Herokuなどのリバースプロキシ環境下で必要
     cookie: { 
         maxAge: 30 * 24 * 60 * 60 * 1000, // 30日間
@@ -49,7 +48,6 @@ app.use(session({
         httpOnly: true,
         sameSite: 'lax' // クロスサイトリクエスト対策
     } 
-    // --- ▲▲▲ ログインループ対策の修正箇所 ▲▲▲ ---
 }));
 
 // Passport の初期化
@@ -334,7 +332,31 @@ app.get('/api/cat1', isAuthenticated, async (req, res) => {
 });
 app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat2/${req.params.cat1} received`); const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1 = $1 ORDER BY category_2', [req.params.cat1]); console.log(`[API] /api/cat2 found ${rows.length}`); res.json(rows.map(r => r.category_2)); } catch (e) { console.error("!!!!! API /api/cat2 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat2' }); } });
 app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat3/${req.params.cat1}/${req.params.cat2} received`); const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); console.log(`[API] /api/cat3 found ${rows.length}`); res.json(rows.map(r => r.category_3)); } catch (e) { console.error("!!!!! API /api/cat3 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat3' }); } });
-app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/folders received`); const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 ORDER BY folder_name', [req.params.cat1, req.params.cat2, req.params.cat3]); console.log(`[API] /api/folders found ${rows.length}`); res.json(rows.map(r => r.folder_name)); } catch (e) { console.error("!!!!! API /api/folders FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching folders' }); } });
+
+// --- ▼▼▼ /api/folders を修正 ▼▼▼ ---
+app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { 
+    try { 
+        console.log(`[API] /api/folders received`);
+        // クエリからソート順を取得 (デフォルトは ASC)
+        const sortOrder = req.query.order === 'DESC' ? 'DESC' : 'ASC';
+        
+        const queryText = `
+            SELECT DISTINCT folder_name 
+            FROM images 
+            WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 
+            ORDER BY folder_name ${sortOrder}
+        `;
+        const { rows } = await pool.query(queryText, [req.params.cat1, req.params.cat2, req.params.cat3]); 
+        
+        console.log(`[API] /api/folders found ${rows.length}`); 
+        res.json(rows.map(r => r.folder_name)); 
+    } catch (e) { 
+        console.error("!!!!! API /api/folders FAILED !!!!!", e); 
+        res.status(500).json({ message: 'Error fetching folders' }); 
+    } 
+});
+// --- ▲▲▲ /api/folders を修正 ▲▲▲ ---
+
 app.get('/api/images/:folderName', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/images/${req.params.folderName} received`); const sortBy = req.query.sort === 'title' ? 'title' : 'created_at'; const sortOrder = req.query.order === 'ASC' ? 'ASC' : 'DESC'; const qT = `SELECT title, url FROM images WHERE folder_name = $1 ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}`; const { rows } = await pool.query(qT, [req.params.folderName]); console.log(`[API] /api/images found ${rows.length}`); res.json(rows); } catch (e) { console.error("!!!!! API /api/images FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching images' }); } });
 app.get('/api/search', isAuthenticated, async (req, res) => { const { folder, q } = req.query; console.log(`[API] /api/search received (folder: ${folder}, q: ${q})`); const sortBy = req.query.sort === 'title' ? 'title' : 'created_at'; const sortOrder = req.query.order === 'ASC' ? 'ASC' : 'DESC'; if (!folder) { return res.status(400).json({ message: 'フォルダ指定必須' }); } try { let qT; let qP; const oBC = `ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}`; if (q && q.trim() !== '') { const s = `%${q}%`; qT = `SELECT title, url FROM images WHERE folder_name = $1 AND title ILIKE $2 ${oBC}`; qP = [folder, s]; } else { qT = `SELECT title, url FROM images WHERE folder_name = $1 ${oBC}`; qP = [folder]; } const { rows } = await pool.query(qT, qP); console.log(`[API] /api/search found ${rows.length}`); res.json(rows); } catch (e) { console.error("!!!!! API /api/search FAILED !!!!!", e); res.status(500).json({ message: '検索失敗' }); } });
 
