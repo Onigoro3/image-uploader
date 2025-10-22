@@ -156,7 +156,10 @@ const createTable = async () => {
         `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2 ON images (category_1, category_2);`,
         `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2_cat3 ON images (category_1, category_2, category_3);`,
         `CREATE INDEX IF NOT EXISTS idx_images_folder_name ON images (folder_name);`,
-        `CREATE INDEX IF NOT EXISTS idx_images_title_length_and_title ON images (length(title), title);`
+        // 以下のソート（L304, L306）を高速化するために、ソートキーに関数インデックスを作成します
+        `CREATE INDEX IF NOT EXISTS idx_images_natural_sort ON images (NULLIF(regexp_replace(regexp_replace(title, '\\.[^.]*$', ''), '.*[^0-9]([0-9]+)$', '\\1'), '')::integer NULLS FIRST, title ASC);`,
+        // L186のソート（length）もインデックス化（ただし、古いインデックスが残っている可能性があるので名前を変更）
+        `CREATE INDEX IF NOT EXISTS idx_images_title_length_sort ON images (length(title), title);`
     ];
 
     try {
@@ -168,8 +171,12 @@ const createTable = async () => {
         
         for (const query of alterColumns) { await pool.query(query); }
         console.log('Database tables altered.');
+        
+        // 古いインデックスを削除 (L186で使われていたもの)
+        await pool.query('DROP INDEX IF EXISTS idx_images_title_length_and_title;');
+        
         for (const query of createIndexes) { await pool.query(query); }
-        console.log('Database indexes created.');
+        console.log('Database indexes created/updated.');
         console.log('Database tables ready.');
     } catch (err) { console.error('DB init error:', err); }
 };
@@ -307,12 +314,41 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
 app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
         const { folder } = req.query; let queryText; let queryParams;
-        const orderByClause = 'ORDER BY length(title), title ASC';
-        if (folder) { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ${orderByClause}`; queryParams = [decodeURIComponent(folder)]; }
-        else { queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, length(title), title ASC`; queryParams = []; }
+        // --- ▼ 修正点 1 (ソート順の変更) ▼ ---
+        // 拡張子を除いたファイル名の末尾の数値でソートし、数値がない場合は先頭 (NULLS FIRST) にし、
+        // 数値が同じ場合はファイル名 (title ASC) でソートします。
+        const orderByClause = "ORDER BY NULLIF(regexp_replace(regexp_replace(title, '\\.[^.]*$', ''), '.*[^0-9]([0-9]+)$', '\\1'), '')::integer NULLS FIRST, title ASC";
+        // --- ▲ 修正点 1 ▲ ---
+
+        if (folder) { 
+            queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ${orderByClause}`; 
+            queryParams = [decodeURIComponent(folder)]; 
+        } else { 
+            // --- ▼ 修正点 2 (ソート順の変更) ▼ ---
+            queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, NULLIF(regexp_replace(regexp_replace(title, '\\.[^.]*$', ''), '.*[^0-9]([0-9]+)$', '\\1'), '')::integer NULLS FIRST, title ASC`; 
+            // --- ▲ 修正点 2 ▲ ---
+            queryParams = []; 
+        }
+        
         const { rows } = await pool.query(queryText, queryParams); if (rows.length === 0) { return res.status(404).send('対象履歴なし'); }
         let csvContent = "大カテゴリ,中カテゴリ,小カテゴリ,フォルダ名,題名,URL\n";
-        rows.forEach(item => { const c1=`"${(item.category_1||'').replace(/"/g,'""')}"`; const c2=`"${(item.category_2||'').replace(/"/g,'""')}"`; const c3=`"${(item.category_3||'').replace(/"/g,'""')}"`; const f=`"${(item.folder_name||'').replace(/"/g,'""')}"`; const titleWithoutExtension = item.title.substring(0, item.title.lastIndexOf('.')) || item.title; const t = `"${titleWithoutExtension.replace(/"/g,'""')}"`; const u=`"${item.url.replace(/"/g,'""')}"`; csvContent += `${c1},${c2},${c3},${f},${t},${u}\n`; });
+        rows.forEach(item => { 
+            const c1=`"${(item.category_1||'').replace(/"/g,'""')}"`; 
+            const c2=`"${(item.category_2||'').replace(/"/g,'""')}"`; 
+            const c3=`"${(item.category_3||'').replace(/"/g,'""')}"`; 
+            const f=`"${(item.folder_name||'').replace(/"/g,'""')}"`; 
+            
+            // --- ▼ 修正点 3 (拡張子除去ロジックの改善) ▼ ---
+            // 最後の . の位置を取得
+            const dotIndex = item.title.lastIndexOf('.'); 
+            // . が存在し、かつファイル名の先頭ではない場合 (例: .htaccess を除く) のみ拡張子を削除
+            const titleWithoutExtension = (dotIndex > 0) ? item.title.substring(0, dotIndex) : item.title;
+            // --- ▲ 修正点 3 ▲ ---
+
+            const t = `"${titleWithoutExtension.replace(/"/g,'""')}"`; 
+            const u=`"${item.url.replace(/"/g,'""')}"`; 
+            csvContent += `${c1},${c2},${c3},${f},${t},${u}\n`; 
+        });
         const fileName = folder ? `list_${decodeURIComponent(folder)}.csv` : 'list_all.csv'; const bom = '\uFEFF'; res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`); res.status(200).send(bom + csvContent);
     } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
 });
