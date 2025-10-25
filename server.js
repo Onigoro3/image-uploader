@@ -4,7 +4,7 @@ const express = require('express');
 const path = require('path');
 const multer = require('multer');
 const multerS3 = require('multer-s3');
-const { S3Client, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
 // --- ▼ 認証関連のライブラリ ▼ ---
 const session = require('express-session');
@@ -198,16 +198,16 @@ const s3Client = new S3Client({
 });
 
 // --- Multer (アップロード処理) 設定 ---
+// メモリストレージに変更 (S3へのキーを動的に決めるため)
 const upload = multer({
-    storage: multerS3({
-        s3: s3Client, bucket: R2_BUCKET_NAME, acl: 'public-read',
-        key: function (req, file, cb) {
-            const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-            cb(null, originalName); // 元のファイル名でアップロード
-        },
-        contentType: multerS3.AUTO_CONTENT_TYPE
-    }),
-    fileFilter: (req, file, cb) => { if (file.mimetype.startsWith('image/')) { cb(null, true); } else { cb(new Error('画像のみ'), false); } }
+    storage: multer.memoryStorage(), // ★変更: メモリに一時保存
+    fileFilter: (req, file, cb) => { 
+        if (file.mimetype.startsWith('image/')) { 
+            cb(null, true); 
+        } else { 
+            cb(new Error('画像のみ'), false); 
+        } 
+    }
 });
 
 // -----------------------------------------------------------------
@@ -297,20 +297,46 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
     if (!category1 || !category2 || !category3 || !folderName ) { return res.status(400).json({ message: '全カテゴリ・フォルダ名必須' }); }
     if (!req.files || req.files.length === 0) { return res.status(400).json({ message: 'ファイル未選択' }); }
     const cat1Trimmed = category1.trim(); const cat2Trimmed = category2.trim(); const cat3Trimmed = category3.trim(); const folderNameTrimmed = folderName.trim();
+    
     try {
         const values = []; const params = []; let paramIndex = 1;
+
         for (const file of req.files) {
-            const targetFilename = file.key;
+            // 1. 元のファイル名を取得 (UTF-8)
+            const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+            
+            // 2. ★★★ 新しいS3キー (パス) を構築 ★★★
+            // 例: "Normal-A/Fire/Set1/MyFolder/1.Fire.jpg"
+            // これをDBの 'title' カラムに保存します
+            const targetFilename = `${cat1Trimmed}/${cat2Trimmed}/${cat3Trimmed}/${folderNameTrimmed}/${originalName}`;
+            
+            // 3. S3 (R2) に手動でアップロード
+            const uploadParams = {
+                Bucket: R2_BUCKET_NAME,
+                Key: targetFilename, // カテゴリパスを含む一意のキー
+                Body: file.buffer,   // メモリ上のファイル本体
+                ContentType: file.mimetype,
+                // ACL: 'public-read' // R2の場合、ACLは不要なことが多いですが、S3互換のために残す
+            };
+            await s3Client.send(new PutObjectCommand(uploadParams));
+
+            // 4. DBに保存するURLを構築 (キーをURLエンコードする)
             const targetUrl = `${r2PublicUrl}/${encodeURIComponent(targetFilename)}`;
+            
+            // 5. DB挿入用のパラメータ準備
             values.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+            // DBの 'title' にはS3キー(targetFilename)を保存
             params.push(targetFilename, targetUrl, cat1Trimmed, cat2Trimmed, cat3Trimmed, folderNameTrimmed);
         }
+        
+        // 6. DBに一括挿入
         const queryText = `
             INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) 
             VALUES ${values.join(', ')}
         `;
         await pool.query(queryText, params);
-        res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件を元のファイル名で保存しました。` });
+        
+        res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件を保存しました。` });
     } catch (error) { console.error('[Upload V3] Error during processing:', error); res.status(500).json({ message: 'ファイル処理エラー' }); }
 });
 
@@ -404,14 +430,67 @@ app.delete('/api/folder/:name', isAuthenticated, async (req, res) => { await per
 
 // --- 画像移動API ---
 app.put('/api/image/:imageTitle', isAuthenticated, async (req, res) => {
-    const { imageTitle } = req.params; const { category1, category2, category3, folderName } = req.body;
+    const { imageTitle } = req.params; // これはS3の古いキー (例: CatA/CatB/file.jpg)
+    const { category1, category2, category3, folderName } = req.body;
+    
     if (!category1 || !category2 || !category3 || !folderName) { return res.status(400).json({ message: '移動先指定必須' }); }
+    
+    const newCat1 = category1.trim();
+    const newCat2 = category2.trim();
+    const newCat3 = category3.trim();
+    const newFolder = folderName.trim();
+    
     try {
-        const updateQuery = `UPDATE images SET category_1 = $1, category_2 = $2, category_3 = $3, folder_name = $4 WHERE title = $5`;
-        const result = await pool.query(updateQuery, [ category1.trim(), category2.trim(), category3.trim(), folderName.trim(), imageTitle ]);
-        if (result.rowCount === 0) { return res.status(404).json({ message: '画像なし' }); }
-        res.json({ message: `画像移動完了` });
-    } catch (error) { console.error(`Move Image Error:`, error); res.status(500).json({ message: '移動失敗' }); }
+        // 1. 元のファイル名を取得 (S3キーの最後の部分)
+        const oldKey = imageTitle;
+        const originalFilename = oldKey.split('/').pop(); // 'CatA/CatB/file.jpg' -> 'file.jpg'
+        
+        if (!originalFilename) {
+            return res.status(400).json({ message: '無効なファイルパスです。' });
+        }
+
+        // 2. 新しいS3キーとURLを構築
+        const newKey = `${newCat1}/${newCat2}/${newCat3}/${newFolder}/${originalFilename}`;
+        const newUrl = `${r2PublicUrl}/${encodeURIComponent(newKey)}`;
+
+        // 3. S3 (R2) 上でファイルをコピー
+        const copyCommand = new CopyObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            CopySource: `${R2_BUCKET_NAME}/${oldKey}`, // CopySourceは Bucket/Key (エンコード不要)
+            Key: newKey
+            // ACL: 'public-read' // 必要に応じて
+        });
+        await s3Client.send(copyCommand);
+
+        // 4. S3 (R2) から古いファイルを削除
+        const deleteCommand = new S3DeleteObjectCommand({ // ★ インポート時のエイリアスを使用
+            Bucket: R2_BUCKET_NAME,
+            Key: oldKey,
+        });
+        await s3Client.send(deleteCommand);
+
+        // 5. データベースの情報を更新 (title と url も新しいキー/URLに更新する)
+        const updateQuery = `
+            UPDATE images 
+            SET category_1 = $1, category_2 = $2, category_3 = $3, folder_name = $4, title = $5, url = $6
+            WHERE title = $7`;
+        const result = await pool.query(updateQuery, [ 
+            newCat1, newCat2, newCat3, newFolder, 
+            newKey, newUrl, // ★ title と url も更新
+            oldKey          // WHERE句は古いキー
+        ]);
+        
+        if (result.rowCount === 0) { 
+            console.warn(`[Move Image] DB update failed for ${oldKey}, but S3 copy succeeded.`);
+            return res.status(404).json({ message: '画像はS3上で移動しましたが、DB更新に失敗しました。' }); 
+        }
+        
+        res.json({ message: `画像移動完了 (S3キーも更新)` });
+
+    } catch (error) { 
+        console.error(`Move Image Error:`, error); 
+        res.status(500).json({ message: '移動失敗' }); 
+    }
 });
 
 // --- 解析API (Tesseract.js 版) ---
