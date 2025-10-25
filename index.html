@@ -251,23 +251,25 @@
                 const images = await response.json(); galleryContainer.innerHTML = '';
                 if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
                 else {
+                    // ★★★ ここから修正 ★★★
                     images.forEach(imgData => {
-                    const itemContainer = document.createElement('div'); itemContainer.className = 'image-item';
-                    const link = document.createElement('a'); link.href = imgData.url;
-                    
-                    // ★ 修正: title (フルパス) からファイル名だけを抽出
-                    const filename = imgData.title.split('/').pop() || imgData.title;
-                    
-                    const img = document.createElement('img'); 
-                    img.className='gallery-image'; 
-                    img.src=imgData.url; 
-                    img.alt=filename;   // ★ 修正
-                    img.title=filename; // ★ 修正
-                    
-                    link.appendChild(img); 
-                    itemContainer.appendChild(link); 
-                    galleryContainer.appendChild(itemContainer);
-                });
+                        const itemContainer = document.createElement('div'); itemContainer.className = 'image-item';
+                        const link = document.createElement('a'); link.href = imgData.url;
+                        
+                        // ★ 修正: title (フルパス) からファイル名だけを抽出
+                        const filename = imgData.title.split('/').pop() || imgData.title;
+                        
+                        const img = document.createElement('img'); 
+                        img.className='gallery-image'; 
+                        img.src=imgData.url; 
+                        img.alt=filename;   // ★ 修正
+                        img.title=filename; // ★ 修正
+                        
+                        link.appendChild(img); 
+                        itemContainer.appendChild(link); 
+                        galleryContainer.appendChild(itemContainer);
+                    });
+                    // ★★★ ここまで修正 ★★★
                     lightbox = new SimpleLightbox('#image-gallery-container .image-item a');
                 }
                 csvButton.href = `/download-csv?folder=${encodedFolderName}`; csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;

@@ -3,8 +3,8 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const multer = require('multer');
-const multerS3 = require('multer-s3');
-const { S3Client, PutObjectCommand, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
+// const multerS3 = require('multer-s3'); // ★ 変更 (使わない)
+const { S3Client, PutObjectCommand, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3'); // ★ 修正: PutObjectCommand を追加
 const { Pool } = require('pg');
 // --- ▼ 認証関連のライブラリ ▼ ---
 const session = require('express-session');
@@ -45,7 +45,7 @@ app.use(session({
     proxy: true, // Render/Herokuなどのリバースプロキシ環境下で必要
     cookie: { 
         maxAge: 30 * 24 * 60 * 60 * 1000, // 30日間
-        secure: 'auto', // 'auto' に変更 (http/https 両対応)
+        secure: 'auto', // 'auto' に変更 (http/httpsC 両対応)
         httpOnly: true,
         sameSite: 'lax' // クロスサイトリクエスト対策
     } 
@@ -115,7 +115,7 @@ function isAuthenticated(req, res, next) {
 const createTable = async () => {
     const createImagesTable = `
     CREATE TABLE IF NOT EXISTS images (
-      id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, url VARCHAR(1024) NOT NULL,
+      id SERIAL PRIMARY KEY, title VARCHAR(1024) NOT NULL, url VARCHAR(1024) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       category_1 VARCHAR(100) DEFAULT 'default_cat1',
       category_2 VARCHAR(100) DEFAULT 'default_cat2',
@@ -198,6 +198,7 @@ const s3Client = new S3Client({
 });
 
 // --- Multer (アップロード処理) 設定 ---
+// ★★★ ここから修正 ★★★
 // メモリストレージに変更 (S3へのキーを動的に決めるため)
 const upload = multer({
     storage: multer.memoryStorage(), // ★変更: メモリに一時保存
@@ -209,6 +210,7 @@ const upload = multer({
         } 
     }
 });
+// ★★★ ここまで修正 ★★★
 
 // -----------------------------------------------------------------
 // ★★★★★ ルート（URL）設定 ★★★★★
@@ -292,6 +294,7 @@ app.get('/', (req, res) => {
 // ▼▼▼ アップロードAPI (/upload) ▼▼▼
 // ==================================================================
 // --- ▼ ログイン必須ミドルウェア(isAuthenticated)を追加
+// ★★★ ここから修正 (API全体を入れ替え) ★★★
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
     const { category1, category2, category3, folderName } = req.body;
     if (!category1 || !category2 || !category3 || !folderName ) { return res.status(400).json({ message: '全カテゴリ・フォルダ名必須' }); }
@@ -339,6 +342,7 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
         res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件を保存しました。` });
     } catch (error) { console.error('[Upload V3] Error during processing:', error); res.status(500).json({ message: 'ファイル処理エラー' }); }
 });
+// ★★★ ここまで修正 ★★★
 
 // ==================================================================
 // ▼▼▼ CSV API (/download-csv) ▼▼▼
@@ -429,6 +433,7 @@ app.delete('/api/cat3/:cat1/:cat2/:name', isAuthenticated, async (req, res) => {
 app.delete('/api/folder/:name', isAuthenticated, async (req, res) => { await performDelete(res, 'folder_name = $1', [req.params.name], `フォルダ「${req.params.name}」`); });
 
 // --- 画像移動API ---
+// ★★★ ここから修正 (API全体を入れ替え) ★★★
 app.put('/api/image/:imageTitle', isAuthenticated, async (req, res) => {
     const { imageTitle } = req.params; // これはS3の古いキー (例: CatA/CatB/file.jpg)
     const { category1, category2, category3, folderName } = req.body;
@@ -492,6 +497,7 @@ app.put('/api/image/:imageTitle', isAuthenticated, async (req, res) => {
         res.status(500).json({ message: '移動失敗' }); 
     }
 });
+// ★★★ ここまで修正 ★★★
 
 // --- 解析API (Tesseract.js 版) ---
 app.post('/api/analyze/:folderName', isAuthenticated, async (req, res) => {
