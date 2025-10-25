@@ -198,7 +198,6 @@ const s3Client = new S3Client({
 });
 
 // --- Multer (アップロード処理) 設定 ---
-// ★★★ ここから修正 ★★★
 // メモリストレージに変更 (S3へのキーを動的に決めるため)
 const upload = multer({
     storage: multer.memoryStorage(), // ★変更: メモリに一時保存
@@ -210,7 +209,6 @@ const upload = multer({
         } 
     }
 });
-// ★★★ ここまで修正 ★★★
 
 // -----------------------------------------------------------------
 // ★★★★★ ルート（URL）設定 ★★★★★
@@ -294,7 +292,6 @@ app.get('/', (req, res) => {
 // ▼▼▼ アップロードAPI (/upload) ▼▼▼
 // ==================================================================
 // --- ▼ ログイン必須ミドルウェア(isAuthenticated)を追加
-// ★★★ ここから修正 (API全体を入れ替え) ★★★
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
     const { category1, category2, category3, folderName } = req.body;
     if (!category1 || !category2 || !category3 || !folderName ) { return res.status(400).json({ message: '全カテゴリ・フォルダ名必須' }); }
@@ -342,29 +339,39 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
         res.json({ message: `「${category1}/${category2}/${category3}/${folderName}」に ${req.files.length} 件を保存しました。` });
     } catch (error) { console.error('[Upload V3] Error during processing:', error); res.status(500).json({ message: 'ファイル処理エラー' }); }
 });
-// ★★★ ここまで修正 ★★★
 
 // ==================================================================
 // ▼▼▼ CSV API (/download-csv) ▼▼▼
 // ==================================================================
 // --- ▼ ログイン必須ミドルウェア(isAuthenticated)を追加
+// ★★★ ここから修正 (API全体を入れ替え) ★★★
 app.get('/download-csv', isAuthenticated, async (req, res) => {
     try {
-        const { folder } = req.query; let queryText; let queryParams;
+        // ★ 修正: cat1, cat2, cat3 を受け取る
+        const { folder, cat1, cat2, cat3 } = req.query; 
+        let queryText; let queryParams;
         
-        // --- ▼ 修正点 3 (ソートクエリの修正) ▼ ---
         // 拡張子を除去し、末尾にある数字([0-9]+)$ を抜き出して数値(INTEGER)としてソートする
         const orderByClause = "ORDER BY CAST( (regexp_matches(regexp_replace(title, '\\.[^.]*$', ''), '([0-9]+)$'))[1] AS INTEGER ) NULLS FIRST, title ASC";
-        // --- ▲ 修正点 3 ▲ ---
 
-        if (folder) { 
+        // ★ 修正: 検索条件に cat1, cat2, cat3, folder を追加
+        if (folder && cat1 && cat2 && cat3) { 
+            queryText = `SELECT title, url, category_1, category_2, category_3, folder_name 
+                         FROM images 
+                         WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 AND folder_name = $4 
+                         ${orderByClause}`; 
+            queryParams = [
+                decodeURIComponent(cat1), 
+                decodeURIComponent(cat2), 
+                decodeURIComponent(cat3), 
+                decodeURIComponent(folder)
+            ];
+        } else if (folder) { // ★ 修正: フォールバック (古い呼び出し方、またはカテゴリ指定がない場合)
             queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images WHERE folder_name = $1 ${orderByClause}`; 
             queryParams = [decodeURIComponent(folder)]; 
         } else { 
-            // --- ▼ 修正点 4 (ソートクエリの修正) ▼ ---
-            // フォルダ指定なしの場合も、同様のソート順を適用
+            // フォルダ指定なし (全件)
             queryText = `SELECT title, url, category_1, category_2, category_3, folder_name FROM images ORDER BY category_1, category_2, category_3, folder_name, CAST( (regexp_matches(regexp_replace(title, '\\.[^.]*$', ''), '([0-9]+)$'))[1] AS INTEGER ) NULLS FIRST, title ASC`; 
-            // --- ▲ 修正点 4 ▲ ---
             queryParams = []; 
         }
         
@@ -384,9 +391,11 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
             const u=`"${item.url.replace(/"/g,'""')}"`; 
             csvContent += `${c1},${c2},${c3},${f},${t},${u}\n`; 
         });
-        const fileName = folder ? `list_${decodeURIComponent(folder)}.csv` : 'list_all.csv'; const bom = '\uFEFF'; res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`); res.status(200).send(bom + csvContent);
+        const fileName = (folder && cat1) ? `list_${cat1}_${folder}.csv` : (folder ? `list_${decodeURIComponent(folder)}.csv` : 'list_all.csv');
+        const bom = '\uFEFF'; res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`); res.status(200).send(bom + csvContent);
     } catch (dbError) { console.error('CSV Error:', dbError); res.status(500).send('CSV生成失敗'); }
 });
+// ★★★ ここまで修正 ★★★
 
 
 // ==================================================================
@@ -406,8 +415,78 @@ app.get('/api/cat1', isAuthenticated, async (req, res) => {
 app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat2/${req.params.cat1} received`); const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1 = $1 ORDER BY category_2', [req.params.cat1]); console.log(`[API] /api/cat2 found ${rows.length}`); res.json(rows.map(r => r.category_2)); } catch (e) { console.error("!!!!! API /api/cat2 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat2' }); } });
 app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/cat3/${req.params.cat1}/${req.params.cat2} received`); const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1 = $1 AND category_2 = $2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); console.log(`[API] /api/cat3 found ${rows.length}`); res.json(rows.map(r => r.category_3)); } catch (e) { console.error("!!!!! API /api/cat3 FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching cat3' }); } });
 app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/folders received`); const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 ORDER BY folder_name', [req.params.cat1, req.params.cat2, req.params.cat3]); console.log(`[API] /api/folders found ${rows.length}`); res.json(rows.map(r => r.folder_name)); } catch (e) { console.error("!!!!! API /api/folders FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching folders' }); } });
-app.get('/api/images/:folderName', isAuthenticated, async (req, res) => { try { console.log(`[API] /api/images/${req.params.folderName} received`); const sortBy = req.query.sort === 'title' ? 'title' : 'created_at'; const sortOrder = req.query.order === 'ASC' ? 'ASC' : 'DESC'; const qT = `SELECT title, url FROM images WHERE folder_name = $1 ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}`; const { rows } = await pool.query(qT, [req.params.folderName]); console.log(`[API] /api/images found ${rows.length}`); res.json(rows); } catch (e) { console.error("!!!!! API /api/images FAILED !!!!!", e); res.status(500).json({ message: 'Error fetching images' }); } });
-app.get('/api/search', isAuthenticated, async (req, res) => { const { folder, q } = req.query; console.log(`[API] /api/search received (folder: ${folder}, q: ${q})`); const sortBy = req.query.sort === 'title' ? 'title' : 'created_at'; const sortOrder = req.query.order === 'ASC' ? 'ASC' : 'DESC'; if (!folder) { return res.status(400).json({ message: 'フォルダ指定必須' }); } try { let qT; let qP; const oBC = `ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}`; if (q && q.trim() !== '') { const s = `%${q}%`; qT = `SELECT title, url FROM images WHERE folder_name = $1 AND title ILIKE $2 ${oBC}`; qP = [folder, s]; } else { qT = `SELECT title, url FROM images WHERE folder_name = $1 ${oBC}`; qP = [folder]; } const { rows } = await pool.query(qT, qP); console.log(`[API] /api/search found ${rows.length}`); res.json(rows); } catch (e) { console.error("!!!!! API /api/search FAILED !!!!!", e); res.status(500).json({ message: '検索失敗' }); } });
+
+// ★★★ ここから修正 (API全体を入れ替え) ★★★
+// ★ 修正: ルートを /api/images に変更 (パラメータ削除)
+app.get('/api/images', isAuthenticated, async (req, res) => { 
+    try { 
+        // ★ 修正: クエリパラメータから cat1, cat2, cat3, folder を取得
+        const { cat1, cat2, cat3, folder } = req.query;
+        const sortBy = req.query.sort === 'title' ? 'title' : 'created_at'; 
+        const sortOrder = req.query.order === 'ASC' ? 'ASC' : 'DESC'; 
+        
+        console.log(`[API] /api/images received (cat1: ${cat1}, cat2: ${cat2}, cat3: ${cat3}, folder: ${folder})`);
+        
+        if (!cat1 || !cat2 || !cat3 || !folder) {
+            return res.status(400).json({ message: 'カテゴリとフォルダの指定が必須です。' });
+        }
+        
+        // ★ 修正: WHERE句にカテゴリ条件を追加
+        const qT = `SELECT title, url 
+                    FROM images 
+                    WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 AND folder_name = $4 
+                    ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}`;
+        
+        const { rows } = await pool.query(qT, [cat1, cat2, cat3, folder]); 
+        
+        console.log(`[API] /api/images found ${rows.length}`); 
+        res.json(rows); 
+    } catch (e) { 
+        console.error("!!!!! API /api/images FAILED !!!!!", e); 
+        res.status(500).json({ message: 'Error fetching images' }); 
+    } 
+});
+// ★★★ ここまで修正 ★★★
+
+// ★★★ ここから修正 (API全体を入れ替え) ★★★
+app.get('/api/search', isAuthenticated, async (req, res) => { 
+    // ★ 修正: cat1, cat2, cat3 を受け取る
+    const { folder, q, cat1, cat2, cat3 } = req.query; 
+    console.log(`[API] /api/search received (cat1: ${cat1}, cat2: ${cat2}, cat3: ${cat3}, folder: ${folder}, q: ${q})`); 
+    
+    const sortBy = req.query.sort === 'title' ? 'title' : 'created_at'; 
+    const sortOrder = req.query.order === 'ASC' ? 'ASC' : 'DESC'; 
+    
+    // ★ 修正: カテゴリとフォルダの必須チェック
+    if (!folder || !cat1 || !cat2 || !cat3) { 
+        return res.status(400).json({ message: 'カテゴリとフォルダの指定が必須です。' }); 
+    } 
+    
+    try { 
+        let qT; let qP; const oBC = `ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}`; 
+        
+        // ★ 修正: ベースのWHERE句
+        const baseWhere = `WHERE category_1 = $1 AND category_2 = $2 AND category_3 = $3 AND folder_name = $4`;
+        
+        if (q && q.trim() !== '') { 
+            const s = `%${q}%`; 
+            // ★ 修正: WHERE句に AND title ILIKE $5 を追加
+            qT = `SELECT title, url FROM images ${baseWhere} AND title ILIKE $5 ${oBC}`; 
+            qP = [cat1, cat2, cat3, folder, s]; 
+        } else { 
+            // ★ 修正: ベースのWHERE句のみ使用
+            qT = `SELECT title, url FROM images ${baseWhere} ${oBC}`; 
+            qP = [cat1, cat2, cat3, folder]; 
+        } 
+        const { rows } = await pool.query(qT, qP); 
+        console.log(`[API] /api/search found ${rows.length}`); 
+        res.json(rows); 
+    } catch (e) { 
+        console.error("!!!!! API /api/search FAILED !!!!!", e); 
+        res.status(500).json({ message: '検索失敗' }); 
+    } 
+});
+// ★★★ ここまで修正 ★★★
 
 // --- カテゴリ・フォルダ編集API ---
 app.put('/api/cat1/:oldName', isAuthenticated, async (req, res) => { const { oldName } = req.params; const { newName } = req.body; if (!newName || newName.trim() === '' || newName.trim() === oldName) return res.status(400).json({message: 'Invalid name'}); try { await pool.query('UPDATE images SET category_1 = $1 WHERE category_1 = $2', [newName.trim(), oldName]); res.json({ message: `大カテゴリ名変更完了` }); } catch (e) { console.error("Rename Cat1 Error:", e); res.status(500).json({ message: '名前変更失敗' }); } });
@@ -433,7 +512,6 @@ app.delete('/api/cat3/:cat1/:cat2/:name', isAuthenticated, async (req, res) => {
 app.delete('/api/folder/:name', isAuthenticated, async (req, res) => { await performDelete(res, 'folder_name = $1', [req.params.name], `フォルダ「${req.params.name}」`); });
 
 // --- 画像移動API ---
-// ★★★ ここから修正 (API全体を入れ替え) ★★★
 app.put('/api/image/:imageTitle', isAuthenticated, async (req, res) => {
     const { imageTitle } = req.params; // これはS3の古いキー (例: CatA/CatB/file.jpg)
     const { category1, category2, category3, folderName } = req.body;
@@ -497,7 +575,6 @@ app.put('/api/image/:imageTitle', isAuthenticated, async (req, res) => {
         res.status(500).json({ message: '移動失敗' }); 
     }
 });
-// ★★★ ここまで修正 ★★★
 
 // --- 解析API (Tesseract.js 版) ---
 app.post('/api/analyze/:folderName', isAuthenticated, async (req, res) => {

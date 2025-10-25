@@ -229,29 +229,72 @@
 
         // UIリセット関数
         function resetUI(startLevel) { if (startLevel <= 1) { selections.cat1 = null; cat2Container.innerHTML = '<h4>中カテゴリ</h4>'; } if (startLevel <= 2) { selections.cat2 = null; cat3Container.innerHTML = '<h4>小カテゴリ</h4>'; } if (startLevel <= 3) { selections.cat3 = null; folderContainer.innerHTML = '<h4>フォルダ</h4>'; } if (startLevel <= 4) { selections.folder = null; galleryContainer.innerHTML = ''; searchSection.style.display = 'none'; searchInput.value = ''; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; analyzeStatus.innerText = ''; } }
+        
+        // ★★★ ここから修正 (関数全体を入れ替え) ★★★
         // 画像読み込みトリガー
-        async function loadImages(folderName) { selections.folder = folderName; searchInput.value = ''; searchSection.style.display = 'flex'; const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(folderName, '', sortBy, sortOrder); }
+        async function loadImages(folderName) { 
+            selections.folder = folderName; 
+            searchInput.value = ''; 
+            searchSection.style.display = 'flex'; 
+            const sortBy = sortBySelect.value; 
+            const sortOrder = sortOrderSelect.value; 
+            // ★ 修正: selections.cat1, cat2, cat3 を渡す
+            await displayImages(selections.cat1, selections.cat2, selections.cat3, folderName, '', sortBy, sortOrder); 
+        }
+        
         // 検索イベントリスナー
-        let searchTimeout; searchInput.addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }, 300); });
+        let searchTimeout; searchInput.addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { 
+            // ★ 修正: selections.cat1, cat2, cat3, folder が揃っているか確認
+            if (selections.cat1 && selections.cat2 && selections.cat3 && selections.folder) { 
+                const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; 
+                // ★ 修正: selections.cat1, cat2, cat3 を渡す
+                await displayImages(selections.cat1, selections.cat2, selections.cat3, selections.folder, searchInput.value.trim(), sortBy, sortOrder); 
+            } 
+        }, 300); });
+        
         // 並び替えイベントリスナー
         function setupSortListeners() { sortBySelect.addEventListener('change', handleSortChange); sortOrderSelect.addEventListener('change', handleSortChange); }
-        async function handleSortChange() { if (selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }
+        
+        async function handleSortChange() { 
+            // ★ 修正: selections.cat1, cat2, cat3, folder が揃っているか確認
+            if (selections.cat1 && selections.cat2 && selections.cat3 && selections.folder) { 
+                const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; 
+                // ★ 修正: selections.cat1, cat2, cat3 を渡す
+                await displayImages(selections.cat1, selections.cat2, selections.cat3, selections.folder, searchInput.value.trim(), sortBy, sortOrder); 
+            } 
+        }
 
         // 画像取得・表示関数
-        async function displayImages(folderName, searchTerm, sortBy = 'created_at', sortOrder = 'DESC') {
+        // ★ 修正: 引数に cat1, cat2, cat3 を追加
+        async function displayImages(cat1, cat2, cat3, folderName, searchTerm, sortBy = 'created_at', sortOrder = 'DESC') {
             try {
                 if (lightbox) { lightbox.destroy(); lightbox = null; }
-                galleryContainer.innerHTML = '<p>読込中...</p>'; const encodedFolderName = encodeURIComponent(folderName);
-                let apiUrl; const sortParams = `&sort=${sortBy}&order=${sortOrder}`;
-                if (searchTerm) { apiUrl = `/api/search?folder=${encodedFolderName}&q=${encodeURIComponent(searchTerm)}${sortParams}`; }
-                else { apiUrl = `/api/images/${encodedFolderName}?sort=${sortBy}&order=${sortOrder}`; }
+                galleryContainer.innerHTML = '<p>読込中...</p>'; 
+                
+                // ★ 修正: URLクエリパラメータを構築
+                const params = new URLSearchParams({
+                    cat1: cat1,
+                    cat2: cat2,
+                    cat3: cat3,
+                    folder: folderName,
+                    sort: sortBy,
+                    order: sortOrder
+                });
+                
+                let apiUrl;
+                if (searchTerm) {
+                    params.append('q', searchTerm);
+                    apiUrl = `/api/search?${params.toString()}`; // ★ 修正: /api/search を使用
+                } else {
+                    apiUrl = `/api/images?${params.toString()}`; // ★ 修正: /api/images (パラメータ形式)
+                }
+
                 const response = await fetch(apiUrl); 
                 if (response.status === 401) { throw new Error('401'); }
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const images = await response.json(); galleryContainer.innerHTML = '';
                 if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
                 else {
-                    // ★★★ ここから修正 ★★★
                     images.forEach(imgData => {
                         const itemContainer = document.createElement('div'); itemContainer.className = 'image-item';
                         const link = document.createElement('a'); link.href = imgData.url;
@@ -269,15 +312,27 @@
                         itemContainer.appendChild(link); 
                         galleryContainer.appendChild(itemContainer);
                     });
-                    // ★★★ ここまで修正 ★★★
                     lightbox = new SimpleLightbox('#image-gallery-container .image-item a');
                 }
-                csvButton.href = `/download-csv?folder=${encodedFolderName}`; csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;
+                
+                // ★ 修正: CSVダウンロードURLにもカテゴリ情報を含める
+                const csvParams = new URLSearchParams({
+                    cat1: cat1,
+                    cat2: cat2,
+                    cat3: cat3,
+                    folder: folderName
+                });
+                csvButton.href = `/download-csv?${csvParams.toString()}`; 
+                csvButton.style.visibility = 'visible'; 
+                csvStatus.innerText = `「${folderName}」CSV`;
+                
             } catch (error) { 
                 console.error('画像読込/検索エラー:', error); galleryContainer.innerHTML = '<p style="color: red;">失敗</p>'; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; if (lightbox) { lightbox.destroy(); lightbox = null; } 
                 if (error.message.includes("401")) { alert("セッションが切れました。再度ログインしてください。"); window.location.href = '/login'; }
             }
         }
+        // ★★★ ここまで修正 ★★★
+
         // 削除関数
         async function deleteItem(itemName, level) {
             let apiPath = ''; let confirmMsg = `「${itemName}」`; let refreshFunction = loadCat1;
