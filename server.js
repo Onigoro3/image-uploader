@@ -14,18 +14,19 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // --- 1. データベース (PostgreSQL) 接続 ---
-// 接続設定を強化（タイムアウト設定を追加）
+// ★重要修正: 接続設定を強化
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    connectionTimeoutMillis: 5000, // 5秒でタイムアウト
-    idleTimeoutMillis: 30000,      // 30秒放置で切断
+    max: 4,                  // ★同時接続数を4つに制限（無料プラン対策）
+    idleTimeoutMillis: 30000,// 30秒使わなければ接続を開放
+    connectionTimeoutMillis: 10000, // 接続待ち時間を10秒に延長
+    keepAlive: true          // ★通信がない時も接続を維持する信号を送る
 });
 
-// データベースのエラー落ちを防ぐ
 pool.on('error', (err) => {
     console.error('Unexpected error on idle client', err);
-    // プロセスを終了させず、ログだけ残す
+    // アプリをクラッシュさせない
 });
 
 // --- Middleware 設定 ---
@@ -44,7 +45,6 @@ const createTable = async () => {
       folder_name VARCHAR(100) DEFAULT 'default_folder'
     );`;
 
-    // カラムが存在しない場合のみ追加する安全なSQL
     const alterColumns = [
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_1') THEN ALTER TABLE images ADD COLUMN category_1 VARCHAR(100) DEFAULT 'default_cat1'; END IF; END $$;`,
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_2') THEN ALTER TABLE images ADD COLUMN category_2 VARCHAR(100) DEFAULT 'default_cat2'; END IF; END $$;`,
@@ -61,11 +61,9 @@ const createTable = async () => {
     ];
 
     try {
-        // 順番に実行（並列実行によるロックエラーを防止）
         await pool.query(createImagesTable);
         for (const query of alterColumns) { await pool.query(query); }
         
-        // 古い複雑なインデックスは削除
         await pool.query('DROP INDEX IF EXISTS idx_images_final_number_sort;');
         await pool.query('DROP INDEX IF EXISTS idx_images_title_length_sort;');
         
@@ -73,7 +71,6 @@ const createTable = async () => {
         console.log('Database initialized successfully.');
     } catch (err) { 
         console.error('DB init error:', err); 
-        // 初期化エラーでもサーバーは起動させる（既存データが見れる可能性があるため）
     }
 };
 
@@ -95,27 +92,25 @@ const upload = multer({
 });
 
 // -----------------------------------------------------------------
-// ★ ルート設定 (認証なし)
+// ★ ルート設定
 // -----------------------------------------------------------------
 
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
-// APIエラーハンドラー
 const apiHandler = (fn) => async (req, res, next) => {
     try {
         await fn(req, res, next);
     } catch (error) {
         console.error("API Error:", error);
+        // 接続エラー時は503(Service Unavailable)を返すことでリトライを促すことも可能だが、ここでは500で統一
         res.status(500).json({ message: error.message || "サーバー内部エラー" });
     }
 };
 
-// --- 画像関連API ---
 app.post('/upload', upload.array('imageFiles', 100), apiHandler(async (req, res) => {
     const { category1, category2, category3, folderName } = req.body;
     if (!req.files || req.files.length === 0) return res.status(400).json({ message: 'ファイル未選択' });
     const cat1 = category1.trim(); const cat2 = category2.trim(); const cat3 = category3.trim(); const fName = folderName.trim();
-    
     const values = []; const params = []; let pIdx = 1;
     for (const file of req.files) {
         const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
@@ -224,19 +219,12 @@ app.post('/api/analyze/:folder', apiHandler(async (req, res) => {
     } catch(e) { if(worker) await worker.terminate(); throw e; }
 }));
 
-// ★重要修正: DB準備完了を待ってからサーバーを起動する
-const startServer = async () => {
+// サーバー起動（DB準備を待たずに起動して、エラー回復力を高める構成に戻します）
+app.listen(port, async () => {
+    console.log(`サーバーが http://localhost:${port} で起動しました`);
     try {
-        // 1. DBテーブル準備
         await createTable();
-        
-        // 2. サーバー起動（ここならアクセスが来ても大丈夫）
-        app.listen(port, () => {
-            console.log(`サーバーが http://localhost:${port} で起動しました`);
-        });
-    } catch (error) {
-        console.error("サーバー起動失敗:", error);
+    } catch (e) {
+        console.error("DB初期化エラー（起動は継続）:", e);
     }
-};
-
-startServer();
+});
