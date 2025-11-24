@@ -117,8 +117,6 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'login.html')));
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'register.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
-
-// ★追加: 個人用ページへのルート
 app.get('/personal', (req, res) => res.sendFile(path.join(__dirname, 'personal.html')));
 
 // 認証API
@@ -161,7 +159,7 @@ app.get('/api/auth/check', (req, res) => {
     else res.json({ loggedIn: false });
 });
 
-// --- 以下、画像機能 (isAuthenticated) ---
+// --- 画像機能 ---
 const apiHandler = (fn) => async (req, res, next) => {
     try { await fn(req, res, next); } 
     catch (e) { console.error(e); res.status(500).json({ message: e.message || "Error" }); }
@@ -220,6 +218,7 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     res.json(rows);
 }));
 
+// --- 削除・編集機能 ---
 async function performDelete(res, where, params) {
     const { rows } = await pool.query(`SELECT title FROM images WHERE ${where}`, params);
     if (rows.length > 0) {
@@ -248,6 +247,13 @@ app.put('/api/image/:title', isAuthenticated, apiHandler(async (req, res) => {
     await s3Client.send(new S3DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: title }));
     await pool.query(`UPDATE images SET category_1=$1, category_2=$2, category_3=$3, folder_name=$4, title=$5, url=$6 WHERE title=$7`, [category1, category2, category3, folderName, newKey, newUrl, title]);
     res.json({ message: "移動完了" });
+}));
+
+// ★追加: 個人用アルバム削除 (カテゴリ指定で安全に削除)
+app.delete('/api/personal/album/:name', isAuthenticated, apiHandler(async (req, res) => {
+    const where = "category_1='Private' AND category_2='Album' AND category_3='Photo' AND folder_name=$1";
+    const params = [req.params.name];
+    await performDelete(res, where, params);
 }));
 
 app.post('/api/analyze/:folder', isAuthenticated, apiHandler(async (req, res) => {
