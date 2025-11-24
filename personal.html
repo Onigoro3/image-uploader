@@ -14,25 +14,26 @@
         #dropZone { border: 2px dashed #ccc; padding: 30px; text-align: center; background: #fff; cursor: pointer; margin-bottom: 10px; }
         
         /* ギャラリー */
-        #album-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 20px; }
+        #album-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 20px; }
         
-        /* アルバムカード */
         .album-folder { 
-            position: relative; /* 削除ボタン配置用 */
+            position: relative; 
             background: #fff; border: 1px solid #ddd; padding: 10px; 
-            text-align: center; cursor: pointer; border-radius: 8px; 
+            text-align: center; cursor: pointer; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         .album-folder:hover { background: #f0f0f0; }
         
-        /* 削除ボタン */
-        .delete-btn {
-            position: absolute; top: 5px; right: 5px;
+        /* ボタン類 */
+        .btn-icon {
+            position: absolute; top: 5px;
             width: 24px; height: 24px;
-            background: #dc3545; color: white;
-            border: none; border-radius: 50%;
+            border-radius: 50%;
             font-size: 12px; line-height: 24px;
             text-align: center; cursor: pointer; padding: 0;
+            border: none; color: white;
         }
+        .delete-btn { right: 5px; background: #dc3545; }
+        .download-btn { right: 35px; background: #007bff; }
 
         #photo-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 5px; margin-top: 20px; }
         .photo-item img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 4px; }
@@ -89,20 +90,32 @@
                     const el = document.createElement('div');
                     el.className = 'album-folder';
                     
-                    // フォルダ名クリックで開く
+                    // フォルダ名
                     const label = document.createElement('div');
                     label.innerHTML = `📁<br><b>${folder}</b>`;
                     label.onclick = () => loadPhotos(folder);
                     
+                    // ダウンロードボタン
+                    const dlBtn = document.createElement('button');
+                    dlBtn.className = 'btn-icon download-btn';
+                    dlBtn.innerText = '⬇️';
+                    dlBtn.title = '一括ダウンロード';
+                    dlBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        window.location.href = `/api/personal/download/${encodeURIComponent(folder)}`;
+                    };
+
                     // 削除ボタン
-                    const delBtn = document.createElement('div');
-                    delBtn.className = 'delete-btn';
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'btn-icon delete-btn';
                     delBtn.innerText = '×';
+                    delBtn.title = '削除';
                     delBtn.onclick = (e) => {
-                        e.stopPropagation(); // フォルダが開かないようにする
+                        e.stopPropagation();
                         deleteAlbum(folder);
                     };
 
+                    el.appendChild(dlBtn);
                     el.appendChild(delBtn);
                     el.appendChild(label);
                     div.appendChild(el);
@@ -111,21 +124,17 @@
         }
 
         async function deleteAlbum(folderName) {
-            if (!confirm(`アルバム「${folderName}」内の写真をすべて削除しますか？\n(この操作は取り消せません)`)) return;
-            
+            if (!confirm(`アルバム「${folderName}」内の写真をすべて削除しますか？`)) return;
             try {
                 const r = await fetch(`/api/personal/album/${encodeURIComponent(folderName)}`, { method: 'DELETE' });
                 if (r.ok) {
                     alert('削除しました');
                     loadAlbums();
-                    // もし開いているアルバムだったら閉じる
                     if (currentAlbum === folderName) {
                         document.getElementById('photo-list').innerHTML = '';
                         document.getElementById('current-album-title').style.display = 'none';
                     }
-                } else {
-                    alert('削除に失敗しました');
-                }
+                } else { alert('削除に失敗しました'); }
             } catch (e) { alert('エラーが発生しました'); }
         }
 

@@ -3,7 +3,8 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const multer = require('multer');
-const { S3Client, PutObjectCommand, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
+// ★追加: GetObjectCommand を追加
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
 
 // --- ▼ 認証関連のライブラリ ▼ ---
@@ -16,6 +17,8 @@ const PgStore = require('connect-pg-simple')(session);
 
 const { createWorker } = require('tesseract.js');
 const https = require('https');
+// ★追加: ZIP圧縮用ライブラリ
+const archiver = require('archiver');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -165,6 +168,39 @@ const apiHandler = (fn) => async (req, res, next) => {
     catch (e) { console.error(e); res.status(500).json({ message: e.message || "Error" }); }
 };
 
+// ★追加: アルバム一括ダウンロード
+app.get('/api/personal/download/:folder', isAuthenticated, apiHandler(async (req, res) => {
+    const folder = req.params.folder;
+    // 個人用フォルダ内の画像のみ対象にする
+    const { rows } = await pool.query(
+        `SELECT title FROM images WHERE category_1='Private' AND category_2='Album' AND category_3='Photo' AND folder_name=$1`,
+        [folder]
+    );
+
+    if (rows.length === 0) return res.status(404).send('Album is empty or does not exist');
+
+    // ZIPファイルとしてレスポンス設定
+    res.attachment(`${encodeURIComponent(folder)}.zip`);
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.pipe(res); // レスポンスに直接パイプ（ストリーミング）
+
+    // S3から取得してZIPに追加
+    for (const row of rows) {
+        const key = row.title;
+        const filename = key.split('/').pop();
+        try {
+            const command = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key });
+            const s3Item = await s3Client.send(command);
+            // S3のストリームをZIPに追加
+            archive.append(s3Item.Body, { name: filename });
+        } catch (e) {
+            console.error(`Download failed for ${key}:`, e);
+        }
+    }
+    await archive.finalize();
+}));
+
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), apiHandler(async (req, res) => {
     const { category1, category2, category3, folderName } = req.body;
     if (!req.files || req.files.length === 0) return res.status(400).json({ message: 'ファイル未選択' });
@@ -249,7 +285,6 @@ app.put('/api/image/:title', isAuthenticated, apiHandler(async (req, res) => {
     res.json({ message: "移動完了" });
 }));
 
-// ★追加: 個人用アルバム削除 (カテゴリ指定で安全に削除)
 app.delete('/api/personal/album/:name', isAuthenticated, apiHandler(async (req, res) => {
     const where = "category_1='Private' AND category_2='Album' AND category_3='Photo' AND folder_name=$1";
     const params = [req.params.name];
