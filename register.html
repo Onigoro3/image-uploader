@@ -3,62 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <title>新規登録</title>
-    <style>
-        body { font-family: sans-serif; display: grid; place-items: center; min-height: 80vh; background-color: #f4f4f4; }
-        form { background: #fff; border: 1px solid #ccc; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        div { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input { width: 300px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        button { width: 100%; padding: 10px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
-        button:hover { background-color: #218838; }
-        p#status { font-weight: bold; }
-        a { color: #007bff; }
-    </style>
+    <style>body{font-family:sans-serif;display:grid;place-items:center;height:80vh;}form{padding:20px;border:1px solid #ccc;}</style>
 </head>
 <body>
-    <form id="registerForm">
+    <form id="regForm">
         <h2>新規登録</h2>
-        <div>
-            <label for="username">ユーザー名:</label>
-            <input type="text" id="username" name="username" required>
-        </div>
-        <div>
-            <label for="password">パスワード:</label>
-            <input type="password" id="password" name="password" required>
-        </div>
+        <input type="text" id="username" placeholder="ユーザー名" required style="display:block;margin-bottom:10px;width:200px;padding:5px;">
+        <input type="password" id="password" placeholder="パスワード(8文字以上)" required style="display:block;margin-bottom:10px;width:200px;padding:5px;">
         <button type="submit">登録</button>
         <p id="status"></p>
-        <p style="text-align: center; margin-top: 15px;">
-            すでにアカウントをお持ちですか？ <a href="/login">ログイン</a>
-        </p>
+        <a href="/login">ログインへ</a>
     </form>
     <script>
-        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+        document.getElementById('regForm').onsubmit = async (e) => {
             e.preventDefault();
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const status = document.getElementById('status');
-            status.textContent = '';
-            try {
-                const response = await fetch('/api/auth/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
-                const data = await response.json();
-                if (response.ok) {
-                    status.style.color = 'green';
-                    status.textContent = '登録が成功しました。ログインしてください。';
-                    setTimeout(() => { window.location.href = '/login'; }, 2000);
-                } else {
-                    status.style.color = 'red';
-                    status.textContent = data.message || '登録に失敗しました。';
-                }
-            } catch (error) {
-                status.style.color = 'red';
-                status.textContent = 'エラーが発生しました。';
+            const u = document.getElementById('username').value;
+            const p = document.getElementById('password').value;
+            const res = await fetch('/api/auth/register', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username:u, password:p})
+            });
+            const data = await res.json();
+            if(res.ok) {
+                document.getElementById('status').innerText = "登録成功。ログイン画面へ...";
+                setTimeout(()=>window.location.href='/login', 1500);
+            } else {
+                document.getElementById('status').innerText = data.message;
+                document.getElementById('status').style.color = 'red';
             }
-        });
+        };
     </script>
 </body>
 </html>
