@@ -6,10 +6,8 @@
     <title>画像アップローダー</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" />
     <style>
-        /* 基本設定 */
         body { font-family: sans-serif; line-height: 1.6; padding: 10px; margin: 0; background-color: #fff; }
         
-        /* 認証ステータスバー */
         #auth-status { 
             position: fixed; top: 0; left: 0; width: 100%; 
             background: #f8f9fa; padding: 10px; 
@@ -20,58 +18,46 @@
             box-sizing: border-box;
         }
         #username-display { margin-right: 10px; font-weight: bold; font-size: 0.9em; }
-        #auth-status button { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+        #auth-status button { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-left: 5px; }
+        #personal-btn { background: #17a2b8 !important; }
         
-        /* メインコンテンツ（バーの分だけ下げる） */
         #main-content { margin-top: 60px; }
-
         hr { margin: 2em 0; border: 0; border-top: 1px solid #eee; }
         
-        /* 入力フォーム共通 */
         input[type="text"], input[type="search"], select { 
             padding: 8px; border: 1px solid #ccc; border-radius: 4px; 
-            width: 100%; box-sizing: border-box; font-size: 16px; /* スマホで入力しやすいサイズ */
-            margin-bottom: 5px; 
+            width: 100%; box-sizing: border-box; font-size: 16px; margin-bottom: 5px; 
         }
         button { padding: 8px 15px; cursor: pointer; border-radius: 4px; font-size: 14px; }
 
-        /* アップロードエリア */
-        #upload-section { 
-            background: #f9f9f9; padding: 15px; border-radius: 8px; 
-            display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; 
-        }
+        #upload-section { background: #f9f9f9; padding: 15px; border-radius: 8px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
         #upload-section label { font-weight: bold; display: block; margin-bottom: 5px; font-size: 0.9em; }
         #uploadStatus { font-weight: bold; grid-column: span 3; margin-top: 10px; word-break: break-all; }
         
-        #dropZone { 
-            border: 2px dashed #ccc; padding: 20px; text-align: center; margin-top: 10px; 
-            background: #fff; border-radius: 4px; cursor: pointer;
-        }
+        #dropZone { border: 2px dashed #ccc; padding: 20px; text-align: center; margin-top: 10px; background: #fff; border-radius: 4px; cursor: pointer; }
         #dropZone.drag-over { background-color: #e9ecef; border-color: #007bff; }
 
-        /* ギャラリーエリア */
         #gallery-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-        .gallery-column { 
-            border: 1px solid #eee; padding: 5px; border-radius: 8px; 
-            background: #fafafa; height: 200px; overflow-y: auto; 
-        }
+        .gallery-column { border: 1px solid #eee; padding: 5px; border-radius: 8px; background: #fafafa; height: 200px; overflow-y: auto; }
         .gallery-column h4 { margin: 0 0 5px 0; font-size: 0.9em; text-align: center; background: #eee; padding: 3px; }
 
-        /* リストアイテム */
         .gallery-item { 
             padding: 8px; border: 1px solid #ddd; border-radius: 4px; background-color: #fff; 
             margin-bottom: 5px; cursor: pointer; font-size: 14px; display: flex; justify-content: space-between; align-items: center;
         }
         .gallery-item.active { background-color: #007bff; color: white; border-color: #007bff; }
         
-        /* 画像一覧 */
         #search-section { margin-top: 20px; border-top: 2px solid #eee; padding-top: 15px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        #image-gallery-container { 
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); /* スマホ向けに最小幅を小さく */
-            gap: 8px; margin-top: 15px; 
-        }
-        .image-item { border: 1px solid #ddd; border-radius: 4px; padding: 3px; background: #fff; }
+        #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; margin-top: 15px; }
+        
+        /* PDF表示用スタイル */
+        .image-item { border: 1px solid #ddd; border-radius: 4px; padding: 3px; background: #fff; overflow: hidden; }
         .gallery-image { width: 100%; aspect-ratio: 1/1; object-fit: cover; display: block; border-radius: 2px; }
+        .pdf-icon { 
+            width: 100%; aspect-ratio: 1/1; display: flex; flex-direction: column; 
+            justify-content: center; align-items: center; background: #ffecec; color: #d32f2f; 
+            font-weight: bold; font-size: 0.9em; text-decoration: none;
+        }
 
         .new-input { display: none; margin-top: 5px; }
         #csvDownloader { display: inline-block; padding: 5px 10px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-size: 12px; visibility: hidden; }
@@ -79,17 +65,11 @@
         .action-buttons { display: flex; gap: 5px; }
         .delete-btn { border: none; border-radius: 3px; width: 24px; height: 24px; background: #dc3545; color: white; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
 
-        /* --- ★スマホ向けレスポンシブ設定★ --- */
         @media (max-width: 768px) {
-            /* アップロード欄を縦積みに */
             #upload-section { grid-template-columns: 1fr; gap: 10px; }
             #upload-section > div, #upload-section > div[style*="grid-column: span 2"] { grid-column: span 1 !important; }
             #uploadStatus { grid-column: span 1 !important; }
-            
-            /* ギャラリー選択欄を2列ずつに */
             #gallery-section { grid-template-columns: 1fr 1fr; }
-            
-            /* 検索欄を縦積みに */
             #search-section { flex-direction: column; align-items: stretch; }
             #search-section input { width: 100% !important; }
             #sort-controls { display: flex; justify-content: space-between; gap: 5px; }
@@ -100,7 +80,7 @@
 <body>
     <div id="auth-status">
         <span id="username-display">...</span>
-        <button onclick="location.href='/personal'" style="margin-right:10px; background:#17a2b8;">個人アルバム</button>
+        <button id="personal-btn" onclick="location.href='/personal'">個人アルバム</button>
         <button id="logoutButton">ログアウト</button>
     </div>
 
@@ -112,11 +92,11 @@
             <div><label>3. 小カテゴリ</label><select id="cat3Select"></select><input type="text" id="cat3NewInput" class="new-input" placeholder="新規入力"></div>
             <div><label>4. フォルダ名</label><input type="text" id="folderInput" value="default_folder"></div>
             <div style="grid-column: span 2;">
-                <label>5. ファイル選択 (タップ)</label>
+                <label>5. ファイル選択 (画像/PDF)</label>
                 <div id="dropZone" onclick="document.getElementById('imageInput').click();">
                     タップしてファイルを選択<br>
                     <span style="font-size:0.8em; color:#888;">(またはPCならドラッグ&ドロップ)</span>
-                    <input type="file" id="imageInput" accept="image/*" multiple style="display: none;">
+                    <input type="file" id="imageInput" accept="image/*,.pdf" multiple style="display: none;">
                     <div id="fileInfo" style="margin-top:5px; font-weight:bold; color:#007bff;">未選択</div>
                 </div>
                 <button id="uploadButton" style="margin-top: 10px; width:100%; background:#28a745; color:white; border:none; padding:12px; font-size:16px; font-weight:bold;">アップロード開始</button>
@@ -146,7 +126,6 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js"></script>
     <script>
-        // --- 認証 & 初期化 ---
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const res = await fetch('/api/auth/check');
@@ -154,9 +133,7 @@
                 if (data.loggedIn) {
                     document.getElementById('username-display').textContent = `${data.username}`;
                     initApp();
-                } else {
-                    window.location.href = '/login';
-                }
+                } else { window.location.href = '/login'; }
             } catch (e) { window.location.href = '/login'; }
         });
 
@@ -165,7 +142,6 @@
             window.location.href = '/login';
         });
 
-        // --- アプリ本体 ---
         const els = {
             file: document.getElementById('imageInput'),
             c1: document.getElementById('cat1Select'), c1n: document.getElementById('cat1NewInput'),
@@ -263,14 +239,25 @@
                 const d = await r.json();
                 els.gal.innerHTML = '';
                 if(d.length === 0) els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center; color:#888;">画像がありません</p>';
+                
                 d.forEach(img => {
                     const name = img.title.split('/').pop();
                     const div = document.createElement('div'); div.className = 'image-item';
-                    div.innerHTML = `<a href="${img.url}"><img src="${img.url}" class="gallery-image" alt="${name}" title="${name}"></a>`;
+                    
+                    // ★修正: PDFか画像かで表示を分ける
+                    if (img.url.toLowerCase().endsWith('.pdf')) {
+                        // PDFの場合: アイコンとリンクを表示 (Lightbox対象外)
+                        div.innerHTML = `<a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.6em; font-weight:normal;">${name}</span></a>`;
+                    } else {
+                        // 画像の場合: 以前と同じ
+                        div.innerHTML = `<a href="${img.url}" class="lightbox-link"><img src="${img.url}" class="gallery-image" alt="${name}" title="${name}"></a>`;
+                    }
                     els.gal.appendChild(div);
                 });
+                
                 if(lightbox) lightbox.destroy();
-                lightbox = new SimpleLightbox('#image-gallery-container a', {captionsData:'title'});
+                // ★修正: Lightboxは画像クラスのみ対象にする
+                lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link', {captionsData:'title'});
                 els.csv.style.visibility = 'visible';
                 els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
                 els.csvStat.textContent = `(フォルダ選択済)`;

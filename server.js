@@ -3,7 +3,6 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const multer = require('multer');
-// ★追加: GetObjectCommand を追加
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
 
@@ -17,7 +16,6 @@ const PgStore = require('connect-pg-simple')(session);
 
 const { createWorker } = require('tesseract.js');
 const https = require('https');
-// ★追加: ZIP圧縮用ライブラリ
 const archiver = require('archiver');
 
 const app = express();
@@ -111,7 +109,19 @@ const s3Client = new S3Client({
     region: 'auto', endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
     credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY },
 });
-const upload = multer({ storage: multer.memoryStorage() });
+
+// ★修正: PDFも許可する設定に変更
+const upload = multer({
+    storage: multer.memoryStorage(),
+    fileFilter: (req, file, cb) => { 
+        // 画像 または PDF ならOK
+        if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') { 
+            cb(null, true); 
+        } else { 
+            cb(new Error('画像またはPDFのみアップロード可能です'), false); 
+        } 
+    }
+});
 
 // -----------------------------------------------------------------
 // ★ ルート設定
@@ -168,35 +178,24 @@ const apiHandler = (fn) => async (req, res, next) => {
     catch (e) { console.error(e); res.status(500).json({ message: e.message || "Error" }); }
 };
 
-// ★追加: アルバム一括ダウンロード
 app.get('/api/personal/download/:folder', isAuthenticated, apiHandler(async (req, res) => {
     const folder = req.params.folder;
-    // 個人用フォルダ内の画像のみ対象にする
     const { rows } = await pool.query(
         `SELECT title FROM images WHERE category_1='Private' AND category_2='Album' AND category_3='Photo' AND folder_name=$1`,
         [folder]
     );
-
-    if (rows.length === 0) return res.status(404).send('Album is empty or does not exist');
-
-    // ZIPファイルとしてレスポンス設定
+    if (rows.length === 0) return res.status(404).send('Empty');
     res.attachment(`${encodeURIComponent(folder)}.zip`);
-
     const archive = archiver('zip', { zlib: { level: 9 } });
-    archive.pipe(res); // レスポンスに直接パイプ（ストリーミング）
-
-    // S3から取得してZIPに追加
+    archive.pipe(res);
     for (const row of rows) {
         const key = row.title;
         const filename = key.split('/').pop();
         try {
             const command = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key });
             const s3Item = await s3Client.send(command);
-            // S3のストリームをZIPに追加
             archive.append(s3Item.Body, { name: filename });
-        } catch (e) {
-            console.error(`Download failed for ${key}:`, e);
-        }
+        } catch (e) { console.error(`DL fail: ${key}`); }
     }
     await archive.finalize();
 }));
@@ -254,7 +253,6 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     res.json(rows);
 }));
 
-// --- 削除・編集機能 ---
 async function performDelete(res, where, params) {
     const { rows } = await pool.query(`SELECT title FROM images WHERE ${where}`, params);
     if (rows.length > 0) {
@@ -295,7 +293,14 @@ app.post('/api/analyze/:folder', isAuthenticated, apiHandler(async (req, res) =>
     const { folder } = req.params;
     const { rows } = await pool.query('SELECT * FROM images WHERE folder_name=$1 ORDER BY title', [folder]);
     if(rows.length===0) return res.status(404).json({message:'画像なし'});
+    
+    // ★修正: PDF以外の画像のみを抽出してOCRにかける
+    const imagesOnly = rows.filter(img => !img.url.toLowerCase().endsWith('.pdf'));
+    
+    if(imagesOnly.length === 0) return res.status(200).send('画像がありません(PDFのみ)');
+
     const worker = await createWorker('jpn+eng');
+    // (簡略化のためダミーレスポンスのままですが、PDFを除外したのでエラーは起きません)
     await worker.terminate();
     res.status(200).send('CSV Dummy');
 }));
