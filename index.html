@@ -72,7 +72,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js" integrity="sha512-/4kQE5RJQYHRhUiK+CZS8UhaJTnLmQkDuf8lOhiP2xLdjthA/rm0VqqWjcyelIx+NDyNHFmtqvuIgOFQnI34WA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
     <script>
-        // --- HTML要素を取得 ---
         const fileInput = document.getElementById('imageInput');
         const cat1Select = document.getElementById('cat1Select'); const cat1NewInput = document.getElementById('cat1NewInput');
         const cat2Select = document.getElementById('cat2Select'); const cat2NewInput = document.getElementById('cat2NewInput');
@@ -91,14 +90,12 @@
         let selections = { cat1: null, cat2: null, cat3: null, folder: null };
         let lightbox;
 
-        // --- ドラッグ＆ドロップ イベントリスナー ---
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
         dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('drag-over'); });
         dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); const f = e.dataTransfer.files; if (f.length > 0) { fileInput.files = f; updateFileInfo(); } });
         fileInput.addEventListener('change', updateFileInfo);
         function updateFileInfo() { fileInfo.textContent = fileInput.files.length > 0 ? `${fileInput.files.length} ファイル` : '選択されていません'; }
 
-        // --- アップロード機能 ---
         uploadButton.addEventListener('click', async () => {
             const files = fileInput.files;
             const cat1 = cat1Select.value === '_new_' ? cat1NewInput.value.trim() : cat1Select.value;
@@ -110,21 +107,19 @@
             for (let i = 0; i < files.length; i++) { formData.append('imageFiles', files[i]); }
             statusP.style.color = 'blue'; statusP.innerText = `アップロード中...`;
             try {
-                const response = await fetch('/upload', { method: 'POST', body: formData }); const data = await response.json();
-                if (response.ok) { statusP.style.color = 'green'; statusP.innerText = data.message; fileInput.value = ''; updateFileInfo(); loadCat1(); }
-                else { throw new Error(data.message); }
-            } catch (error) { statusP.style.color = 'red'; statusP.innerText = `失敗: ${error.message}`; }
+                const response = await fetch('/upload', { method: 'POST', body: formData }); 
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+                statusP.style.color = 'green'; statusP.innerText = data.message; fileInput.value = ''; updateFileInfo(); loadCat1();
+            } catch (error) { statusP.style.color = 'red'; statusP.innerText = `失敗: ${error.message}`; alert(`アップロードエラー: ${error.message}`); }
         });
 
-        // --- ギャラリー機能 ---
-        // ★修正: 認証チェックを削除し、すぐに開始
         document.addEventListener('DOMContentLoaded', async () => {
             loadCat1();
             setupSelectListeners();
             setupSortListeners();
         });
 
-        // Select要素の選択肢生成
         function populateSelect(selectElement, items, currentSelection) {
             selectElement.innerHTML = '<option value="">--- 選択 ---</option>';
             items.forEach(item => { const option = document.createElement('option'); option.value = item; option.text = item; if (item === currentSelection) option.selected = true; selectElement.appendChild(option); });
@@ -153,19 +148,22 @@
         function resetAndAddCreateOption(selectElement) { selectElement.innerHTML = '<option value="">---</option>'; const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption); }
 
         async function loadCat1() { resetUI(1); resetUploadUI(1); await loadList('/api/cat1', cat1Container, '大カテゴリ', (n) => { selections.cat1 = n; loadCat2(n); cat1Select.value = n; handleSelectChange(cat1Select, cat1NewInput, 1); }, true, 1); await loadCat1Options(); }
-        async function loadCat1Options(){ try { const r=await fetch('/api/cat1'); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat1Select, i, selections.cat1); } catch(e){ console.error("Cat1 opt err:", e); cat1Select.innerHTML='<option value="">失敗</option>'; } }
+        async function loadCat1Options(){ try { const r=await fetch('/api/cat1'); const d=await r.json(); if(!r.ok) throw Error(d.message||`HTTP ${r.status}`); populateSelect(cat1Select, d, selections.cat1); } catch(e){ console.error("Cat1 opt err:", e); cat1Select.innerHTML='<option value="">失敗</option>'; } }
         async function loadCat2(c1) { resetUI(2); resetUploadUI(2); await loadList(`/api/cat2/${encodeURIComponent(c1)}`, cat2Container, '中カテゴリ', (n) => { selections.cat2 = n; loadCat3(c1, n); cat2Select.value = n; handleSelectChange(cat2Select, cat2NewInput, 2); }, true, 2); await loadCat2Options(c1); }
-        async function loadCat2Options(c1){ try { const r=await fetch(`/api/cat2/${encodeURIComponent(c1)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat2Select, i, selections.cat2); } catch(e){ console.error("Cat2 opt err:", e); cat2Select.innerHTML=''; } }
+        async function loadCat2Options(c1){ try { const r=await fetch(`/api/cat2/${encodeURIComponent(c1)}`); const d=await r.json(); if(!r.ok) throw Error(d.message||`HTTP ${r.status}`); populateSelect(cat2Select, d, selections.cat2); } catch(e){ console.error("Cat2 opt err:", e); cat2Select.innerHTML=''; } }
         async function loadCat3(c1, c2) { resetUI(3); resetUploadUI(3); await loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`, cat3Container, '小カテゴリ', (n) => { selections.cat3 = n; loadFolders(c1, c2, n); cat3Select.value = n; handleSelectChange(cat3Select, cat3NewInput, 3); }, true, 3); await loadCat3Options(c1, c2); }
-        async function loadCat3Options(c1, c2){ try { const r=await fetch(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat3Select, i, selections.cat3); } catch(e){ console.error("Cat3 opt err:", e); cat3Select.innerHTML=''; } }
+        async function loadCat3Options(c1, c2){ try { const r=await fetch(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`); const d=await r.json(); if(!r.ok) throw Error(d.message||`HTTP ${r.status}`); populateSelect(cat3Select, d, selections.cat3); } catch(e){ console.error("Cat3 opt err:", e); cat3Select.innerHTML=''; } }
         async function loadFolders(c1, c2, c3) { resetUI(4); await loadList(`/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`, folderContainer, 'フォルダ', (n) => { selections.folder = n; loadImages(n); folderInput.value = n; }, true, 4); }
 
         async function loadList(apiUrl, container, title, onClickCallback, addActionButtons = false, level = 0) {
             container.innerHTML = `<h4>${title}</h4><p class="loading-status">読込中...</p>`;
             try {
                 const response = await fetch(apiUrl); 
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const items = await response.json(); container.innerHTML = `<h4>${title}</h4>`;
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+                
+                const items = data; 
+                container.innerHTML = `<h4>${title}</h4>`;
                 if (items.length === 0) { container.innerHTML += '<p>データなし</p>'; return; }
                 items.forEach(itemName => {
                     const itemDiv = document.createElement('div'); itemDiv.className = 'gallery-item';
@@ -181,7 +179,12 @@
                     }
                     container.appendChild(itemDiv);
                 });
-            } catch (error) { console.error(`${title}読み込みエラー:`, error); container.innerHTML = `<h4>${title}</h4><p style="color: red;">失敗</p>`; }
+            } catch (error) { 
+                console.error(`${title}読み込みエラー:`, error); 
+                container.innerHTML = `<h4>${title}</h4><p style="color: red;">失敗</p>`; 
+                // ★エラー時にアラートを出す
+                if (!container.dataset.alertShown) { alert(`データ取得エラー: ${error.message}`); container.dataset.alertShown = true; }
+            }
         }
 
         function resetUI(startLevel) { if (startLevel <= 1) { selections.cat1 = null; cat2Container.innerHTML = '<h4>中カテゴリ</h4>'; } if (startLevel <= 2) { selections.cat2 = null; cat3Container.innerHTML = '<h4>小カテゴリ</h4>'; } if (startLevel <= 3) { selections.cat3 = null; folderContainer.innerHTML = '<h4>フォルダ</h4>'; } if (startLevel <= 4) { selections.folder = null; galleryContainer.innerHTML = ''; searchSection.style.display = 'none'; searchInput.value = ''; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; analyzeStatus.innerText = ''; } }
@@ -197,8 +200,11 @@
                 galleryContainer.innerHTML = '<p>読込中...</p>'; 
                 const params = new URLSearchParams({ cat1: cat1, cat2: cat2, cat3: cat3, folder: folderName, sort: sortBy, order: sortOrder });
                 let apiUrl = searchTerm ? `/api/search?${params.toString()}&q=${encodeURIComponent(searchTerm)}` : `/api/search?${params.toString()}`;
-                const response = await fetch(apiUrl); if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const images = await response.json(); galleryContainer.innerHTML = '';
+                const response = await fetch(apiUrl); 
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+                
+                const images = data; galleryContainer.innerHTML = '';
                 if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
                 else {
                     images.forEach(imgData => {
@@ -212,7 +218,7 @@
                 }
                 const csvParams = new URLSearchParams({ cat1: cat1, cat2: cat2, cat3: cat3, folder: folderName });
                 csvButton.href = `/download-csv?${csvParams.toString()}`; csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;
-            } catch (error) { console.error('画像読込/検索エラー:', error); galleryContainer.innerHTML = '<p style="color: red;">失敗</p>'; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; if (lightbox) { lightbox.destroy(); lightbox = null; } }
+            } catch (error) { console.error('画像読込/検索エラー:', error); galleryContainer.innerHTML = '<p style="color: red;">失敗</p>'; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; if (lightbox) { lightbox.destroy(); lightbox = null; } alert(`画像読込エラー: ${error.message}`); }
         }
 
         async function deleteItem(itemName, level) {
@@ -224,9 +230,12 @@
             else { return; }
             if (!confirm(confirmMsg)) return;
             try {
-                statusP.innerText = `削除中...`; statusP.style.color = 'blue'; const response = await fetch(apiPath, { method: 'DELETE' }); if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const data = await response.json(); statusP.innerText = data.message; statusP.style.color = 'green'; refreshFunction(); resetUI(level + 1);
-            } catch (error) { console.error('削除エラー:', error); statusP.innerText = '削除失敗'; statusP.style.color = 'red'; }
+                statusP.innerText = `削除中...`; statusP.style.color = 'blue'; 
+                const response = await fetch(apiPath, { method: 'DELETE' }); 
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+                statusP.innerText = data.message; statusP.style.color = 'green'; refreshFunction(); resetUI(level + 1);
+            } catch (error) { console.error('削除エラー:', error); statusP.innerText = '削除失敗'; statusP.style.color = 'red'; alert(`削除エラー: ${error.message}`); }
         }
         async function renameItem(oldItemName, level) {
             const newItemName = prompt(`「${oldItemName}」の新しい名前:`, oldItemName); if (!newItemName || newItemName.trim() === '' || newItemName.trim() === oldItemName) return;
@@ -239,9 +248,10 @@
             try {
                 statusP.innerText = `変更中...`; statusP.style.color = 'blue';
                 const response = await fetch(apiPath, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ newName: newItemName.trim() }) });
-                if (!response.ok) { const errData = await response.json().catch(() => ({ message: `HTTP ${response.status}` })); throw new Error(errData.message || `HTTP ${response.status}`); }
-                const data = await response.json(); statusP.innerText = data.message; statusP.style.color = 'green'; refreshFunction(); resetUI(level + 1);
-            } catch (error) { console.error('名前変更エラー:', error); statusP.innerText = `変更失敗: ${error.message}`; statusP.style.color = 'red'; }
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+                statusP.innerText = data.message; statusP.style.color = 'green'; refreshFunction(); resetUI(level + 1);
+            } catch (error) { console.error('名前変更エラー:', error); statusP.innerText = `変更失敗: ${error.message}`; statusP.style.color = 'red'; alert(`変更エラー: ${error.message}`); }
         }
         async function analyzeFolder(folderName) {
             analyzeStatus.innerText = `「${folderName}」解析中...`; analyzeStatus.style.color = '#17a2b8';
@@ -253,7 +263,7 @@
                 if (disposition && disposition.includes('attachment')) { const m = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition); if (m && m[1]) { filename = decodeURIComponent(m[1].replace(/['"]/g, '')); } }
                 a.download = filename; document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); a.remove();
                 analyzeStatus.innerText = `「${folderName}」解析CSV完了`; analyzeStatus.style.color = 'green';
-            } catch (error) { console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; statusP.style.color = 'red'; }
+            } catch (error) { console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; statusP.style.color = 'red'; alert(`解析エラー: ${error.message}`); }
         }
     </script>
 </body>
