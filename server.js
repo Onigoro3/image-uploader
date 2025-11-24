@@ -14,9 +14,18 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // --- 1. データベース (PostgreSQL) 接続 ---
+// 接続設定を強化（タイムアウト設定を追加）
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 5000, // 5秒でタイムアウト
+    idleTimeoutMillis: 30000,      // 30秒放置で切断
+});
+
+// データベースのエラー落ちを防ぐ
+pool.on('error', (err) => {
+    console.error('Unexpected error on idle client', err);
+    // プロセスを終了させず、ログだけ残す
 });
 
 // --- Middleware 設定 ---
@@ -35,6 +44,7 @@ const createTable = async () => {
       folder_name VARCHAR(100) DEFAULT 'default_folder'
     );`;
 
+    // カラムが存在しない場合のみ追加する安全なSQL
     const alterColumns = [
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_1') THEN ALTER TABLE images ADD COLUMN category_1 VARCHAR(100) DEFAULT 'default_cat1'; END IF; END $$;`,
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_2') THEN ALTER TABLE images ADD COLUMN category_2 VARCHAR(100) DEFAULT 'default_cat2'; END IF; END $$;`,
@@ -47,16 +57,15 @@ const createTable = async () => {
         `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2 ON images (category_1, category_2);`,
         `CREATE INDEX IF NOT EXISTS idx_images_cat1_cat2_cat3 ON images (category_1, category_2, category_3);`,
         `CREATE INDEX IF NOT EXISTS idx_images_folder_name ON images (folder_name);`,
-        // 複雑な正規表現インデックスはエラーの原因になりやすいため削除しました
         `CREATE INDEX IF NOT EXISTS idx_images_title_simple ON images (title);`
     ];
 
     try {
+        // 順番に実行（並列実行によるロックエラーを防止）
         await pool.query(createImagesTable);
-        
         for (const query of alterColumns) { await pool.query(query); }
         
-        // 古いインデックスがあれば削除（エラー防止）
+        // 古い複雑なインデックスは削除
         await pool.query('DROP INDEX IF EXISTS idx_images_final_number_sort;');
         await pool.query('DROP INDEX IF EXISTS idx_images_title_length_sort;');
         
@@ -64,6 +73,7 @@ const createTable = async () => {
         console.log('Database initialized successfully.');
     } catch (err) { 
         console.error('DB init error:', err); 
+        // 初期化エラーでもサーバーは起動させる（既存データが見れる可能性があるため）
     }
 };
 
@@ -88,10 +98,9 @@ const upload = multer({
 // ★ ルート設定 (認証なし)
 // -----------------------------------------------------------------
 
-// メインページへ直接アクセス
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
-// API: エラー時に詳細を返すヘルパー
+// APIエラーハンドラー
 const apiHandler = (fn) => async (req, res, next) => {
     try {
         await fn(req, res, next);
@@ -123,7 +132,6 @@ app.post('/upload', upload.array('imageFiles', 100), apiHandler(async (req, res)
 app.get('/download-csv', apiHandler(async (req, res) => {
     const { folder, cat1, cat2, cat3 } = req.query;
     let queryText, queryParams;
-    // ソート処理を単純化（エラー防止）
     const orderBy = "ORDER BY title ASC"; 
     if (folder && cat1 && cat2 && cat3) {
         queryText = `SELECT * FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 AND folder_name=$4 ${orderBy}`; queryParams = [cat1, cat2, cat3, folder];
@@ -216,7 +224,19 @@ app.post('/api/analyze/:folder', apiHandler(async (req, res) => {
     } catch(e) { if(worker) await worker.terminate(); throw e; }
 }));
 
-app.listen(port, async () => {
-    await createTable();
-    console.log(`サーバーが http://localhost:${port} で起動しました`);
-});
+// ★重要修正: DB準備完了を待ってからサーバーを起動する
+const startServer = async () => {
+    try {
+        // 1. DBテーブル準備
+        await createTable();
+        
+        // 2. サーバー起動（ここならアクセスが来ても大丈夫）
+        app.listen(port, () => {
+            console.log(`サーバーが http://localhost:${port} で起動しました`);
+        });
+    } catch (error) {
+        console.error("サーバー起動失敗:", error);
+    }
+};
+
+startServer();
