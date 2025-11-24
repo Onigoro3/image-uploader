@@ -6,14 +6,6 @@ const multer = require('multer');
 const { S3Client, PutObjectCommand, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
 
-// --- ▼ 認証関連のライブラリ ▼ ---
-const session = require('express-session');
-const passport = require('passport');
-const LocalStrategy = require('passport-local').Strategy;
-const bcrypt = require('bcryptjs'); 
-const PgStore = require('connect-pg-simple')(session); // 修正済（スペース追加）
-// --- ▲ 認証関連のライブラリ ▲ ---
-
 const { createWorker } = require('tesseract.js');
 const sharp = require('sharp');
 const https = require('https');
@@ -31,75 +23,9 @@ const pool = new Pool({
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// --- ▼ 認証機能 (Session と Passport の設定) ▼ ---
-
-app.use(session({
-    store: new PgStore({
-        pool: pool,
-        tableName: 'user_sessions',
-        createTableIfMissing: true 
-    }),
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    proxy: true, 
-    cookie: { 
-        maxAge: 30 * 24 * 60 * 60 * 1000, 
-        secure: 'auto', 
-        httpOnly: true,
-        sameSite: 'lax'
-    } 
-}));
-
-app.use(passport.initialize());
-app.use(passport.session());
-
-passport.use(new LocalStrategy(
-    async (username, password, done) => {
-        try {
-            const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
-            if (rows.length === 0) {
-                return done(null, false, { message: 'ユーザー名またはパスワードが違います。' });
-            }
-            const user = rows[0];
-            const isMatch = await bcrypt.compare(password, user.password_hash);
-            if (isMatch) {
-                return done(null, user);
-            } else {
-                return done(null, false, { message: 'ユーザー名またはパスワードが違います。' });
-            }
-        } catch (error) {
-            return done(error);
-        }
-    }
-));
-
-passport.serializeUser((user, done) => {
-    done(null, user.id);
-});
-
-passport.deserializeUser(async (id, done) => {
-    try {
-        const { rows } = await pool.query('SELECT id, username FROM users WHERE id = $1', [id]);
-        if (rows.length > 0) {
-            done(null, rows[0]);
-        } else {
-            done(new Error('User not found'));
-        }
-    } catch (error) {
-        done(error);
-    }
-});
-
-function isAuthenticated(req, res, next) {
-    if (req.isAuthenticated()) {
-        return next();
-    }
-    res.status(401).json({ message: 'ログインが必要です。' });
-}
-
 // --- DBテーブル自動作成関数 ---
 const createTable = async () => {
+    // 画像テーブルのみ作成
     const createImagesTable = `
     CREATE TABLE IF NOT EXISTS images (
       id SERIAL PRIMARY KEY, title VARCHAR(1024) NOT NULL, url VARCHAR(1024) NOT NULL,
@@ -110,23 +36,6 @@ const createTable = async () => {
       folder_name VARCHAR(100) DEFAULT 'default_folder'
     );`;
 
-    const createUsersTable = `
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username VARCHAR(100) UNIQUE NOT NULL,
-      password_hash VARCHAR(100) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );`;
-
-    const createSessionTable = `
-    CREATE TABLE IF NOT EXISTS "user_sessions" (
-      "sid" varchar NOT NULL COLLATE "default" PRIMARY KEY,
-      "sess" json NOT NULL,
-      "expire" timestamp(6) NOT NULL
-    ) WITH (OIDS=FALSE);
-    CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");
-    `;
-    
     const alterColumns = [
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_1') THEN ALTER TABLE images ADD COLUMN category_1 VARCHAR(100) DEFAULT 'default_cat1'; END IF; END $$;`,
         `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='images' AND column_name='category_2') THEN ALTER TABLE images ADD COLUMN category_2 VARCHAR(100) DEFAULT 'default_cat2'; END IF; END $$;`,
@@ -145,12 +54,7 @@ const createTable = async () => {
 
     try {
         await pool.query(createImagesTable);
-        await pool.query(createUsersTable);
-        
-        // ★重要修正: 壊れている可能性のあるセッションテーブルを一度削除して作り直す
-        // (これにより Primary Key エラーなどが解消されます)
-        await pool.query('DROP TABLE IF EXISTS "user_sessions" CASCADE;');
-        await pool.query(createSessionTable);
+        // セッションやユーザーテーブルの作成処理は削除しました
         
         for (const query of alterColumns) { await pool.query(query); }
         
@@ -182,68 +86,14 @@ const upload = multer({
 });
 
 // -----------------------------------------------------------------
-// ★ ルート設定
+// ★ ルート設定 (認証なし)
 // -----------------------------------------------------------------
 
-app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'login.html')));
-app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'register.html')));
+// メインページへ直接アクセス
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
-app.post('/api/auth/register', async (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password || password.length < 8) {
-        return res.status(400).json({ message: 'ユーザー名と8文字以上のパスワードが必要です。' });
-    }
-    try {
-        const salt = await bcrypt.genSalt(10);
-        const passwordHash = await bcrypt.hash(password, salt);
-        await pool.query('INSERT INTO users (username, password_hash) VALUES ($1, $2)', [username, passwordHash]);
-        res.status(201).json({ message: '登録が成功しました。' });
-    } catch (error) {
-        if (error.code === '23505') {
-            res.status(409).json({ message: 'そのユーザー名はすでに使用されています。' });
-        } else {
-            console.error('Register Error:', error);
-            res.status(500).json({ message: 'サーバーエラーが発生しました。' });
-        }
-    }
-});
-
-// [POST] ログイン
-app.post('/api/auth/login', (req, res, next) => {
-    passport.authenticate('local', (err, user, info) => {
-        if (err) { return next(err); }
-        if (!user) {
-            return res.status(401).json({ message: info.message || 'ログイン失敗' });
-        }
-        req.logIn(user, (err) => {
-            if (err) { return next(err); } // ここでエラーが起きると 500エラー(HTML) が返り、クライアントで「エラーが発生しました」となる
-            return res.json({ message: 'ログイン成功', user: user.username });
-        });
-    })(req, res, next);
-});
-
-app.post('/api/auth/logout', (req, res, next) => {
-    req.logout((err) => {
-        if (err) { return next(err); }
-        req.session.destroy((err) => {
-            if (err) { return res.status(500).json({ message: 'ログアウト失敗' }); }
-            res.clearCookie('connect.sid');
-            res.json({ message: 'ログアウトしました。' });
-        });
-    });
-});
-
-app.get('/api/auth/check', (req, res) => {
-    if (req.isAuthenticated()) {
-        res.json({ loggedIn: true, username: req.user.username });
-    } else {
-        res.json({ loggedIn: false });
-    }
-});
-
-// --- 画像関連API (ログイン必須) ---
-app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req, res) => {
+// --- 画像関連API (誰でもアクセス可能) ---
+app.post('/upload', upload.array('imageFiles', 100), async (req, res) => {
     const { category1, category2, category3, folderName } = req.body;
     if (!req.files || req.files.length === 0) return res.status(400).json({ message: 'ファイル未選択' });
     const cat1 = category1.trim(); const cat2 = category2.trim(); const cat3 = category3.trim(); const fName = folderName.trim();
@@ -262,7 +112,7 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), async (req
     } catch (e) { console.error('Upload Error:', e); res.status(500).json({ message: 'アップロード失敗' }); }
 });
 
-app.get('/download-csv', isAuthenticated, async (req, res) => {
+app.get('/download-csv', async (req, res) => {
     try {
         const { folder, cat1, cat2, cat3 } = req.query;
         let queryText, queryParams;
@@ -287,11 +137,11 @@ app.get('/download-csv', isAuthenticated, async (req, res) => {
     } catch (e) { console.error(e); res.status(500).send('エラー'); }
 });
 
-app.get('/api/cat1', isAuthenticated, async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT category_1 FROM images ORDER BY category_1'); res.json(rows.map(r => r.category_1)); });
-app.get('/api/cat2/:cat1', isAuthenticated, async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1=$1 ORDER BY category_2', [req.params.cat1]); res.json(rows.map(r => r.category_2)); });
-app.get('/api/cat3/:cat1/:cat2', isAuthenticated, async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1=$1 AND category_2=$2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); res.json(rows.map(r => r.category_3)); });
-app.get('/api/folders/:cat1/:cat2/:cat3', isAuthenticated, async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 ORDER BY folder_name', [req.params.cat1, req.params.cat2, req.params.cat3]); res.json(rows.map(r => r.folder_name)); });
-app.get('/api/search', isAuthenticated, async (req, res) => {
+app.get('/api/cat1', async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT category_1 FROM images ORDER BY category_1'); res.json(rows.map(r => r.category_1)); });
+app.get('/api/cat2/:cat1', async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT category_2 FROM images WHERE category_1=$1 ORDER BY category_2', [req.params.cat1]); res.json(rows.map(r => r.category_2)); });
+app.get('/api/cat3/:cat1/:cat2', async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT category_3 FROM images WHERE category_1=$1 AND category_2=$2 ORDER BY category_3', [req.params.cat1, req.params.cat2]); res.json(rows.map(r => r.category_3)); });
+app.get('/api/folders/:cat1/:cat2/:cat3', async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 ORDER BY folder_name', [req.params.cat1, req.params.cat2, req.params.cat3]); res.json(rows.map(r => r.folder_name)); });
+app.get('/api/search', async (req, res) => {
     const { cat1, cat2, cat3, folder, q, sort, order } = req.query;
     if (!cat1 || !cat2 || !cat3 || !folder) return res.status(400).json({message: 'カテゴリ指定必須'});
     const sortBy = sort === 'title' ? 'title' : 'created_at'; const sortDir = order === 'ASC' ? 'ASC' : 'DESC';
@@ -311,13 +161,37 @@ async function performDelete(res, where, params, label) {
         await pool.query(`DELETE FROM images WHERE ${where}`, params); res.json({ message: `${label} 削除完了` });
     } catch(e) { console.error(e); res.status(500).json({message: '削除失敗'}); }
 }
-app.put('/api/cat1/:old', isAuthenticated, async(req, res) => { await pool.query('UPDATE images SET category_1=$1 WHERE category_1=$2', [req.body.newName, req.params.old]); res.json({message: '変更完了'}); });
-app.delete('/api/cat1/:name', isAuthenticated, async(req, res) => performDelete(res, 'category_1=$1', [req.params.name], '大カテゴリ'));
-app.delete('/api/cat2/:c1/:name', isAuthenticated, async(req, res) => performDelete(res, 'category_1=$1 AND category_2=$2', [req.params.c1, req.params.name], '中カテゴリ'));
-app.delete('/api/cat3/:c1/:c2/:name', isAuthenticated, async(req, res) => performDelete(res, 'category_1=$1 AND category_2=$2 AND category_3=$3', [req.params.c1, req.params.c2, req.params.name], '小カテゴリ'));
-app.delete('/api/folder/:name', isAuthenticated, async(req, res) => performDelete(res, 'folder_name=$1', [req.params.name], 'フォルダ'));
 
-app.post('/api/analyze/:folder', isAuthenticated, async (req, res) => {
+// 編集・削除API (認証チェック削除)
+app.put('/api/cat1/:old', async(req, res) => { await pool.query('UPDATE images SET category_1=$1 WHERE category_1=$2', [req.body.newName, req.params.old]); res.json({message: '変更完了'}); });
+app.put('/api/cat2/:c1/:old', async(req, res) => { await pool.query('UPDATE images SET category_2=$1 WHERE category_1=$2 AND category_2=$3', [req.body.newName, req.params.c1, req.params.old]); res.json({message: '変更完了'}); });
+app.put('/api/cat3/:c1/:c2/:old', async(req, res) => { await pool.query('UPDATE images SET category_3=$1 WHERE category_1=$2 AND category_2=$3 AND category_3=$4', [req.body.newName, req.params.c1, req.params.c2, req.params.old]); res.json({message: '変更完了'}); });
+app.put('/api/folder/:old', async(req, res) => { await pool.query('UPDATE images SET folder_name=$1 WHERE folder_name=$2', [req.body.newName, req.params.old]); res.json({message: '変更完了'}); });
+
+app.delete('/api/cat1/:name', async(req, res) => performDelete(res, 'category_1=$1', [req.params.name], '大カテゴリ'));
+app.delete('/api/cat2/:c1/:name', async(req, res) => performDelete(res, 'category_1=$1 AND category_2=$2', [req.params.c1, req.params.name], '中カテゴリ'));
+app.delete('/api/cat3/:c1/:c2/:name', async(req, res) => performDelete(res, 'category_1=$1 AND category_2=$2 AND category_3=$3', [req.params.c1, req.params.c2, req.params.name], '小カテゴリ'));
+app.delete('/api/folder/:name', async(req, res) => performDelete(res, 'folder_name=$1', [req.params.name], 'フォルダ'));
+
+// 画像移動API
+app.put('/api/image/:imageTitle', async (req, res) => {
+    const { imageTitle } = req.params;
+    const { category1, category2, category3, folderName } = req.body;
+    if (!category1 || !category2 || !category3 || !folderName) { return res.status(400).json({ message: '移動先指定必須' }); }
+    const newCat1 = category1.trim(); const newCat2 = category2.trim(); const newCat3 = category3.trim(); const newFolder = folderName.trim();
+    try {
+        const oldKey = imageTitle; const originalFilename = oldKey.split('/').pop();
+        if (!originalFilename) return res.status(400).json({ message: '無効なパス' });
+        const newKey = `${newCat1}/${newCat2}/${newCat3}/${newFolder}/${originalFilename}`;
+        const newUrl = `${r2PublicUrl}/${encodeURIComponent(newKey)}`;
+        await s3Client.send(new CopyObjectCommand({ Bucket: R2_BUCKET_NAME, CopySource: `${R2_BUCKET_NAME}/${oldKey}`, Key: newKey }));
+        await s3Client.send(new S3DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: oldKey }));
+        const result = await pool.query(`UPDATE images SET category_1=$1, category_2=$2, category_3=$3, folder_name=$4, title=$5, url=$6 WHERE title=$7`, [newCat1, newCat2, newCat3, newFolder, newKey, newUrl, oldKey]);
+        res.json({ message: `画像移動完了` });
+    } catch (error) { console.error(`Move Error:`, error); res.status(500).json({ message: '移動失敗' }); }
+});
+
+app.post('/api/analyze/:folder', async (req, res) => {
     const { folder } = req.params; let worker;
     try {
         const { rows } = await pool.query('SELECT * FROM images WHERE folder_name=$1 ORDER BY title', [folder]);
