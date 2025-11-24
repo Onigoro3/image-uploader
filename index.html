@@ -5,19 +5,46 @@
     <title>画像アップローダー</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" />
     <style>
-        body { font-family: sans-serif; padding: 1em 2em; }
-        #auth-status { position: fixed; top: 10px; right: 20px; background: #fff; padding: 5px 10px; border: 1px solid #ccc; border-radius: 5px; z-index: 100; }
-        #auth-status button { margin-left: 10px; background: #dc3545; color: white; border: none; padding: 5px 10px; cursor: pointer; }
-        input, select { padding: 5px; margin-bottom: 5px; width: 95%; }
-        button { padding: 5px 10px; cursor: pointer; }
-        #upload-section { background: #f9f9f9; padding: 15px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; border-radius: 8px; }
-        #dropZone { border: 2px dashed #ccc; padding: 20px; text-align: center; margin-top: 10px; }
-        #dropZone.drag-over { background-color: #e9ecef; }
-        .gallery-column { border: 1px solid #eee; padding: 10px; min-height: 200px; max-height: 400px; overflow-y: auto; }
-        .gallery-item { padding: 5px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; }
-        .gallery-item.active { background-color: #007bff; color: white; }
-        #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
-        .gallery-image { width: 100%; height: 130px; object-fit: cover; }
+        body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
+        
+        /* --- 認証ステータスバー (追加) --- */
+        #auth-status { position: fixed; top: 10px; right: 20px; background: #fff; padding: 5px 10px; border-radius: 5px; border: 1px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.1); z-index: 100; }
+        #auth-status button { margin-left: 10px; background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
+        
+        hr { margin: 2em 0; }
+        input[type="text"], input[type="search"], select { padding: 5px; border: 1px solid #ccc; border-radius: 4px; width: 95%; margin-bottom: 5px; font-size: 14px; }
+        button { padding: 5px 10px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+        
+        /* アップロードエリア */
+        #upload-section { background: #f9f9f9; padding: 15px; border-radius: 8px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px 20px; }
+        #upload-section label { font-weight: bold; display: block; margin-bottom: 3px; }
+        #uploadStatus { font-weight: bold; grid-column: span 3; margin-top: 10px; }
+        #dropZone { border: 2px dashed #ccc; padding: 20px; text-align: center; margin-top: 10px; transition: background-color 0.2s ease; background: #fff; }
+        #dropZone.drag-over { background-color: #e9ecef; border-color: #007bff; }
+        
+        /* ギャラリーエリア */
+        #gallery-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        .gallery-column { border: 1px solid #eee; padding: 10px; border-radius: 8px; background: #fafafa; min-height: 200px; max-height: 400px; overflow-y: auto; }
+        
+        /* アイテムスタイル (以前のデザインに戻しました) */
+        .gallery-item { padding: 8px; border: 1px solid #ccc; border-radius: 5px; background-color: #fff; font-weight: bold; margin-bottom: 5px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .gallery-item:hover { background-color: #f0f0f0; }
+        .gallery-item.active { background-color: #007bff; color: white; border-color: #007bff; }
+        
+        /* 検索・画像一覧 */
+        #search-section { margin-top: 20px; border-top: 2px solid #eee; padding-top: 10px; padding-bottom: 10px; display: flex; align-items: center; gap: 15px;}
+        #image-gallery-container { grid-column: span 4; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-top: 10px; padding-top: 10px; border-top: 2px solid #eee; }
+        .image-item { border: 1px solid #ddd; border-radius: 4px; padding: 5px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .gallery-image { width: 100%; height: 130px; object-fit: cover; display: block; }
+        
+        .new-input { display: none; margin-top: 5px; }
+        #csvDownloader { display: inline-block; padding: 8px 12px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; visibility: hidden; }
+        
+        /* アクションボタン */
+        .action-buttons { display: flex; gap: 3px; }
+        .edit-btn, .delete-btn { border: none; border-radius: 3px; width: 24px; height: 24px; cursor: pointer; color: white; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+        .edit-btn { background: #ffc107; } 
+        .delete-btn { background: #dc3545; }
     </style>
 </head>
 <body>
@@ -28,41 +55,54 @@
 
     <h3>画像アップロード</h3>
     <div id="upload-section">
-        <div><label>1. 大カテゴリ</label><select id="cat1Select"></select><input type="text" id="cat1NewInput" style="display:none;" placeholder="新規"></div>
-        <div><label>2. 中カテゴリ</label><select id="cat2Select"></select><input type="text" id="cat2NewInput" style="display:none;" placeholder="新規"></div>
-        <div><label>3. 小カテゴリ</label><select id="cat3Select"></select><input type="text" id="cat3NewInput" style="display:none;" placeholder="新規"></div>
-        <div><label>4. フォルダ名</label><input type="text" id="folderInput" value="default_folder"></div>
+        <div><label>1. 大カテゴリ:</label><select id="cat1Select"></select><input type="text" id="cat1NewInput" class="new-input" placeholder="新しい大カテゴリ名"></div>
+        <div><label>2. 中カテゴリ:</label><select id="cat2Select"></select><input type="text" id="cat2NewInput" class="new-input" placeholder="新しい中カテゴリ名"></div>
+        <div><label>3. 小カテゴリ:</label><select id="cat3Select"></select><input type="text" id="cat3NewInput" class="new-input" placeholder="新しい小カテゴリ名"></div>
+        <div><label>4. フォルダ名:</label><input type="text" id="folderInput" value="default_folder"></div>
         <div style="grid-column: span 2;">
-            <div id="dropZone">ここにファイルをドロップ <input type="file" id="imageInput" multiple style="display:none;"> <button onclick="document.getElementById('imageInput').click()">選択</button> <span id="fileInfo"></span></div>
-            <button id="uploadButton" style="margin-top:10px;">アップロード</button>
+            <label>5. ファイルを選択 または ドラッグ＆ドロップ</label>
+            <div id="dropZone">
+                ここにファイルをドラッグ＆ドロップ<br>または
+                <input type="file" id="imageInput" accept="image/*" multiple style="display: none;">
+                <button type="button" onclick="document.getElementById('imageInput').click();">ファイルを選択</button>
+                <div id="fileInfo" style="margin-top:5px; font-size:0.9em; color:#666;">選択されていません</div>
+            </div>
+            <button id="uploadButton" style="margin-top: 15px; width:100%; background:#28a745; color:white; border:none; padding:10px;">アップロード</button>
         </div>
-        <p id="uploadStatus" style="grid-column: span 3;"></p>
+        <p id="uploadStatus"></p>
     </div>
-    
+
     <hr>
-    <h3>ギャラリー <a href="#" id="csvButton" style="font-size:12px; display:none;">CSVダウンロード</a></h3>
-    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
-        <div id="cat1-container" class="gallery-column"><h4>大</h4></div>
-        <div id="cat2-container" class="gallery-column"><h4>中</h4></div>
-        <div id="cat3-container" class="gallery-column"><h4>小</h4></div>
-        <div id="folder-container" class="gallery-column"><h4>フォルダ</h4></div>
-    </div>
+    <h3>履歴・ギャラリー <a href="#" id="csvDownloader">CSVダウンロード</a> <span id="csv-status-text" style="font-size:0.9em; color:#666;">(フォルダ選択で有効化)</span></h3>
+    <p style="font-size:0.9em; color:#666;">大 → 中 → 小 → フォルダ の順に選択してください。</p>
     
-    <div style="margin-top: 10px;">
-        <input type="search" id="searchInput" placeholder="検索..." style="width: 300px;">
+    <div id="gallery-section">
+        <div id="cat1-container" class="gallery-column"><h4>大カテゴリ</h4><p class="loading-status">読込中...</p></div>
+        <div id="cat2-container" class="gallery-column"><h4>中カテゴリ</h4><p class="loading-status"></p></div>
+        <div id="cat3-container" class="gallery-column"><h4>小カテゴリ</h4><p class="loading-status"></p></div>
+        <div id="folder-container" class="gallery-column"><h4>フォルダ</h4><p class="loading-status"></p></div>
+    </div>
+
+    <div id="search-section" style="display: none;">
+        <div> <label>画像検索:</label> <input type="search" id="searchInput" placeholder="ファイル名で検索..." style="width: 250px;"> </div>
+        <div id="sort-controls"> 
+            <label>並び替え:</label> 
+            <select id="sortBy" style="width:auto;"><option value="created_at">日付順</option><option value="title">名前順</option></select> 
+            <select id="sortOrder" style="width:auto;"><option value="DESC">新しい順 (降順)</option><option value="ASC">古い順 (昇順)</option></select> 
+        </div>
     </div>
     <div id="image-gallery-container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js"></script>
     <script>
-        // 認証チェック
+        // --- 認証 & 初期化 ---
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const res = await fetch('/api/auth/check');
                 const data = await res.json();
                 if (data.loggedIn) {
                     document.getElementById('username-display').textContent = `User: ${data.username}`;
-                    initApp();
+                    initApp(); // ログイン確認後にアプリ起動
                 } else {
                     window.location.href = '/login';
                 }
@@ -82,90 +122,191 @@
             c3: document.getElementById('cat3Select'), c3n: document.getElementById('cat3NewInput'),
             folder: document.getElementById('folderInput'),
             upBtn: document.getElementById('uploadButton'), stat: document.getElementById('uploadStatus'),
-            gal: document.getElementById('image-gallery-container'),
             drop: document.getElementById('dropZone'), info: document.getElementById('fileInfo'),
-            csv: document.getElementById('csvButton'), search: document.getElementById('searchInput')
+            gal: document.getElementById('image-gallery-container'),
+            csv: document.getElementById('csvDownloader'), csvStat: document.getElementById('csv-status-text'),
+            searchSec: document.getElementById('search-section'), search: document.getElementById('searchInput'),
+            sort: document.getElementById('sortBy'), order: document.getElementById('sortOrder')
         };
         let sels = { c1: null, c2: null, c3: null, f: null };
         let lightbox;
 
         function initApp() {
-            loadList('/api/cat1', 'cat1-container', (v) => { sels.c1=v; loadCat2(v); els.c1.value=v; checkNew(els.c1, els.c1n); });
-            loadOpts('/api/cat1', els.c1);
+            // 1. 大カテゴリ読み込み
+            loadCat1();
             
-            els.drop.ondragover = e => { e.preventDefault(); els.drop.classList.add('drag-over'); };
-            els.drop.ondragleave = () => els.drop.classList.remove('drag-over');
-            els.drop.ondrop = e => { e.preventDefault(); els.drop.classList.remove('drag-over'); els.file.files = e.dataTransfer.files; els.info.textContent = `${els.file.files.length} files`; };
-            els.file.onchange = () => els.info.textContent = `${els.file.files.length} files`;
-
-            const checkNew = (sel, inp) => inp.style.display = sel.value === '_new_' ? 'block' : 'none';
-            els.c1.onchange = () => { checkNew(els.c1, els.c1n); if(els.c1.value !== '_new_') loadCat2(els.c1.value); };
-            els.c2.onchange = () => { checkNew(els.c2, els.c2n); if(els.c2.value !== '_new_') loadCat3(sels.c1, els.c2.value); };
-            els.c3.onchange = () => checkNew(els.c3, els.c3n);
-
-            els.upBtn.onclick = async () => {
-                const fd = new FormData();
-                fd.append('category1', els.c1.value==='_new_'?els.c1n.value:els.c1.value);
-                fd.append('category2', els.c2.value==='_new_'?els.c2n.value:els.c2.value);
-                fd.append('category3', els.c3.value==='_new_'?els.c3n.value:els.c3.value);
-                fd.append('folderName', els.folder.value);
-                for(let f of els.file.files) fd.append('imageFiles', f);
-                els.stat.innerText = "Uploading...";
-                try {
-                    const r = await fetch('/upload', {method:'POST', body:fd});
-                    if(!r.ok) throw new Error((await r.json()).message);
-                    els.stat.innerText = "Success"; location.reload();
-                } catch(e) { els.stat.innerText = "Error: "+e.message; }
-            };
+            // 2. イベントリスナー設定
+            setupDropZone();
+            setupSelects();
             
-            let timer;
-            els.search.oninput = () => { clearTimeout(timer); timer = setTimeout(() => loadImages(sels.f, els.search.value), 500); };
+            els.upBtn.onclick = uploadFiles;
+            els.search.oninput = debounce(() => loadImages(sels.f, els.search.value), 500);
+            els.sort.onchange = els.order.onchange = () => loadImages(sels.f, els.search.value);
         }
 
-        async function loadList(url, id, cb) {
-            const div = document.getElementById(id); div.innerHTML = '<h4>Loading...</h4>';
+        // --- 読み込みロジック ---
+        // 日本語タイトルを維持するために引数を追加
+        async function loadList(url, containerId, title, onClick) {
+            const div = document.getElementById(containerId);
+            div.innerHTML = `<h4>${title}</h4><p style="color:#999; font-size:0.8em;">読込中...</p>`;
             try {
-                const r = await fetch(url); const d = await r.json();
-                div.innerHTML = `<h4>${id.split('-')[0]}</h4>`;
-                if(d.length===0) div.innerHTML+='<p>None</p>';
-                d.forEach(v => {
-                    const el = document.createElement('div'); el.className='gallery-item'; el.innerText=v;
-                    el.onclick = () => { 
-                        div.querySelectorAll('.gallery-item').forEach(x=>x.classList.remove('active')); 
-                        el.classList.add('active'); cb(v); 
+                const r = await fetch(url);
+                if(r.status === 401) return window.location.href = '/login'; // 認証切れ対応
+                if(!r.ok) throw new Error('Failed');
+                const data = await r.json();
+                
+                div.innerHTML = `<h4>${title}</h4>`;
+                if(data.length === 0) { div.innerHTML += '<p style="font-size:0.8em; color:#ccc;">なし</p>'; return; }
+                
+                data.forEach(val => {
+                    const el = document.createElement('div'); el.className = 'gallery-item';
+                    el.innerHTML = `<span>${val}</span>`;
+                    
+                    // 削除・編集ボタン（フォルダのみ）
+                    if (containerId === 'folder-container') {
+                        const btns = document.createElement('div'); btns.className = 'action-buttons';
+                        btns.innerHTML = `<button class="delete-btn" title="削除">×</button>`;
+                        btns.querySelector('.delete-btn').onclick = (e) => { e.stopPropagation(); deleteFolder(val); };
+                        el.appendChild(btns);
+                    }
+
+                    el.onclick = () => {
+                        div.querySelectorAll('.gallery-item').forEach(x => x.classList.remove('active'));
+                        el.classList.add('active');
+                        onClick(val);
                     };
                     div.appendChild(el);
                 });
-            } catch(e) { div.innerHTML = 'Error'; }
+            } catch(e) { div.innerHTML = `<h4>${title}</h4><p style="color:red;">エラー</p>`; }
         }
-        
+
         async function loadOpts(url, sel) {
-            const r = await fetch(url); const d = await r.json();
-            sel.innerHTML = '<option value="">Select</option>';
-            d.forEach(v => sel.innerHTML += `<option value="${v}">${v}</option>`);
-            sel.innerHTML += '<option value="_new_">+ New</option>';
+            try {
+                const r = await fetch(url); if(!r.ok) return;
+                const d = await r.json();
+                sel.innerHTML = '<option value="">-- 選択 --</option>';
+                d.forEach(v => sel.innerHTML += `<option value="${v}">${v}</option>`);
+                sel.innerHTML += '<option value="_new_">+ 新規作成</option>';
+            } catch(e){}
         }
 
-        const loadCat2 = (c1) => { sels.c1=c1; loadList(`/api/cat2/${c1}`, 'cat2-container', v=>{sels.c2=v; loadCat3(c1,v); els.c2.value=v;}); loadOpts(`/api/cat2/${c1}`, els.c2); };
-        const loadCat3 = (c1,c2) => { sels.c2=c2; loadList(`/api/cat3/${c1}/${c2}`, 'cat3-container', v=>{sels.c3=v; loadF(c1,c2,v); els.c3.value=v;}); loadOpts(`/api/cat3/${c1}/${c2}`, els.c3); };
-        const loadF = (c1,c2,c3) => { sels.c3=c3; loadList(`/api/folders/${c1}/${c2}/${c3}`, 'folder-container', v=>{sels.f=v; els.folder.value=v; loadImages(v);}); };
+        // --- 階層連動 ---
+        const loadCat1 = () => {
+            resetUI(1);
+            loadList('/api/cat1', 'cat1-container', '大カテゴリ', (v) => { sels.c1=v; els.c1.value=v; checkNew(els.c1, els.c1n); loadCat2(v); });
+            loadOpts('/api/cat1', els.c1);
+        };
+        const loadCat2 = (c1) => {
+            resetUI(2);
+            loadList(`/api/cat2/${c1}`, 'cat2-container', '中カテゴリ', (v) => { sels.c2=v; els.c2.value=v; checkNew(els.c2, els.c2n); loadCat3(c1,v); });
+            loadOpts(`/api/cat2/${c1}`, els.c2);
+        };
+        const loadCat3 = (c1,c2) => {
+            resetUI(3);
+            loadList(`/api/cat3/${c1}/${c2}`, 'cat3-container', '小カテゴリ', (v) => { sels.c3=v; els.c3.value=v; checkNew(els.c3, els.c3n); loadFolder(c1,c2,v); });
+            loadOpts(`/api/cat3/${c1}/${c2}`, els.c3);
+        };
+        const loadFolder = (c1,c2,c3) => {
+            resetUI(4);
+            loadList(`/api/folders/${c1}/${c2}/${c3}`, 'folder-container', 'フォルダ', (v) => { sels.f=v; els.folder.value=v; loadImages(v); });
+        };
 
+        // --- 画像表示 ---
         async function loadImages(f, q='') {
             if(!f) return;
-            els.gal.innerHTML = 'Loading...';
-            const u = `/api/search?cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}&folder=${f}&q=${q}`;
-            const r = await fetch(u); const d = await r.json();
-            els.gal.innerHTML = '';
-            d.forEach(img => {
-                const div = document.createElement('div');
-                div.innerHTML = `<a href="${img.url}"><img src="${img.url}" class="gallery-image" title="${img.title}"></a>`;
-                els.gal.appendChild(div);
+            els.gal.innerHTML = '<p>画像を読み込んでいます...</p>';
+            els.searchSec.style.display = 'flex';
+            const params = new URLSearchParams({
+                cat1: sels.c1, cat2: sels.c2, cat3: sels.c3, folder: f, q: q,
+                sort: els.sort.value, order: els.order.value
             });
-            if(lightbox) lightbox.destroy();
-            lightbox = new SimpleLightbox('#image-gallery-container a');
-            els.csv.style.display = 'inline';
-            els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
+            
+            try {
+                const r = await fetch(`/api/search?${params}`);
+                if(r.status === 401) return window.location.href = '/login';
+                const d = await r.json();
+                els.gal.innerHTML = '';
+                if(d.length === 0) els.gal.innerHTML = '<p>画像がありません</p>';
+                
+                d.forEach(img => {
+                    const name = img.title.split('/').pop();
+                    const div = document.createElement('div'); div.className = 'image-item';
+                    div.innerHTML = `<a href="${img.url}"><img src="${img.url}" class="gallery-image" alt="${name}" title="${name}"></a>`;
+                    els.gal.appendChild(div);
+                });
+                
+                if(lightbox) lightbox.destroy();
+                lightbox = new SimpleLightbox('#image-gallery-container a');
+                
+                // CSVボタン有効化
+                els.csv.style.visibility = 'visible';
+                els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
+                els.csvStat.textContent = `「${f}」のCSV`;
+            } catch(e) { els.gal.innerHTML = '<p style="color:red">読み込み失敗</p>'; }
         }
+
+        // --- アップロード ---
+        async function uploadFiles() {
+            const fd = new FormData();
+            const c1 = els.c1.value==='_new_' ? els.c1n.value : els.c1.value;
+            const c2 = els.c2.value==='_new_' ? els.c2n.value : els.c2.value;
+            const c3 = els.c3.value==='_new_' ? els.c3n.value : els.c3.value;
+            const f = els.folder.value;
+            
+            if(!c1 || !c2 || !c3 || !f) return alert('カテゴリとフォルダ名は必須です');
+            if(els.file.files.length === 0) return alert('ファイルを選択してください');
+
+            fd.append('category1', c1); fd.append('category2', c2); fd.append('category3', c3); fd.append('folderName', f);
+            for(let file of els.file.files) fd.append('imageFiles', file);
+
+            els.stat.innerText = "アップロード中..."; els.stat.style.color = "blue";
+            try {
+                const r = await fetch('/upload', { method: 'POST', body: fd });
+                if(r.status === 401) return window.location.href = '/login';
+                if(!r.ok) throw new Error('Upload failed');
+                els.stat.innerText = "完了しました！"; els.stat.style.color = "green";
+                els.file.value = ''; els.info.innerText = '選択されていません';
+                // 現在の階層をリロード
+                if(sels.c1) loadCat1();
+            } catch(e) { els.stat.innerText = "失敗しました"; els.stat.style.color = "red"; }
+        }
+
+        // --- 削除機能 (フォルダ) ---
+        async function deleteFolder(name) {
+            if(!confirm(`フォルダ「${name}」内の画像を全て削除しますか？`)) return;
+            try {
+                const r = await fetch(`/api/folder/${encodeURIComponent(name)}`, { method: 'DELETE' });
+                if(r.ok) { alert('削除しました'); loadFolder(sels.c1, sels.c2, sels.c3); }
+            } catch(e) { alert('削除エラー'); }
+        }
+
+        // --- ユーティリティ ---
+        function resetUI(level) {
+            if(level<=1) { els.c1.value=''; document.getElementById('cat2-container').innerHTML='<h4>中カテゴリ</h4>'; sels.c1=null; }
+            if(level<=2) { els.c2.value=''; document.getElementById('cat3-container').innerHTML='<h4>小カテゴリ</h4>'; sels.c2=null; }
+            if(level<=3) { els.c3.value=''; document.getElementById('folder-container').innerHTML='<h4>フォルダ</h4>'; sels.c3=null; }
+            if(level<=4) { els.folder.value='default_folder'; els.gal.innerHTML=''; els.searchSec.style.display='none'; els.csv.style.visibility='hidden'; els.csvStat.innerText='(フォルダ選択で有効化)'; sels.f=null; }
+        }
+        function setupDropZone() {
+            els.drop.ondragover = e => { e.preventDefault(); els.drop.classList.add('drag-over'); };
+            els.drop.ondragleave = () => els.drop.classList.remove('drag-over');
+            els.drop.ondrop = e => { e.preventDefault(); els.drop.classList.remove('drag-over'); els.file.files = e.dataTransfer.files; els.info.textContent = `${els.file.files.length} ファイル`; };
+            els.file.onchange = () => els.info.textContent = `${els.file.files.length} ファイル`;
+        }
+        function setupSelects() {
+            const h = (sel, inp, level) => { 
+                checkNew(sel, inp); 
+                if(sel.value !== '_new_') {
+                    if(level===1) loadCat2(sel.value);
+                    if(level===2) loadCat3(sels.c1, sel.value);
+                }
+            };
+            els.c1.onchange = () => h(els.c1, els.c1n, 1);
+            els.c2.onchange = () => h(els.c2, els.c2n, 2);
+            els.c3.onchange = () => checkNew(els.c3, els.c3n);
+        }
+        function checkNew(sel, inp) { inp.style.display = sel.value === '_new_' ? 'block' : 'none'; }
+        function debounce(func, wait) { let timeout; return function(...args) { clearTimeout(timeout); timeout = setTimeout(() => func.apply(this, args), wait); }; }
     </script>
 </body>
 </html>
