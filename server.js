@@ -10,8 +10,8 @@ const { Pool } = require('pg');
 const session = require('express-session');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
-const bcrypt = require('bcryptjs'); // ★修正: bcryptjsに変更（互換性と安定性のため）
-constPgStore = require('connect-pg-simple')(session); 
+const bcrypt = require('bcryptjs'); 
+const PgStore = require('connect-pg-simple')(session); // ★ここにスペースを入れてください
 // --- ▲ 認証関連のライブラリ ▲ ---
 
 const { createWorker } = require('tesseract.js');
