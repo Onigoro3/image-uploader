@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>個人用アルバム</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" />
+    <style>
+        /* 基本スタイルはindex.htmlと共通（簡略化） */
+        body { font-family: sans-serif; padding: 10px; margin: 0; background: #fffaf0; /* 少し色を変えて区別 */ }
+        #nav-bar { padding: 10px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ccc; background: #fff; }
+        a { color: #007bff; text-decoration: none; }
+        input { padding: 8px; width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+        button { padding: 10px; width: 100%; background: #28a745; color: white; border: none; border-radius: 4px; font-weight: bold; }
+        #dropZone { border: 2px dashed #ccc; padding: 30px; text-align: center; background: #fff; cursor: pointer; margin-bottom: 10px; }
+        
+        /* ギャラリー */
+        #album-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 20px; }
+        .album-folder { background: #fff; border: 1px solid #ddd; padding: 10px; text-align: center; cursor: pointer; border-radius: 8px; }
+        .album-folder:hover { background: #f0f0f0; }
+        
+        #photo-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 5px; margin-top: 20px; }
+        .photo-item img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div id="nav-bar">
+        <span>🔒 個人用アルバム</span>
+        <a href="/">ショップ管理へ戻る</a>
+    </div>
+
+    <div style="padding: 20px; max-width: 600px; margin: 0 auto;">
+        <h3>アルバム作成・追加</h3>
+        <label>アルバム名 (フォルダ名):</label>
+        <input type="text" id="albumName" placeholder="例: 京都旅行2025">
+        
+        <div id="dropZone" onclick="document.getElementById('fileInput').click()">
+            写真をタップして選択<br>
+            <span id="fileInfo" style="font-size:0.8em; color:#888;">未選択</span>
+            <input type="file" id="fileInput" multiple accept="image/*" style="display:none">
+        </div>
+        <button id="uploadBtn">保存する</button>
+        <p id="status"></p>
+    </div>
+
+    <hr>
+    <h3 style="padding-left: 10px;">アルバム一覧</h3>
+    <div id="album-list" style="padding: 10px;"></div>
+    <h3 id="current-album-title" style="padding-left: 10px; display:none;"></h3>
+    <div id="photo-list" style="padding: 10px;"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js"></script>
+    <script>
+        // 固定カテゴリ設定
+        const CAT1 = "Private";
+        const CAT2 = "Album";
+        const CAT3 = "Photo";
+        let currentAlbum = null;
+        let lightbox;
+
+        // 初期化
+        document.addEventListener('DOMContentLoaded', loadAlbums);
+
+        // アルバム一覧読み込み
+        async function loadAlbums() {
+            const div = document.getElementById('album-list');
+            div.innerHTML = 'Loading...';
+            try {
+                // サーバーには「Private/Album/Photo」階層にあるフォルダを問い合わせる
+                const r = await fetch(`/api/folders/${CAT1}/${CAT2}/${CAT3}`);
+                if(r.status === 401) return window.location.href = '/login';
+                const data = await r.json();
+                
+                div.innerHTML = '';
+                if(data.length === 0) div.innerHTML = '<p>アルバムがありません</p>';
+                
+                data.forEach(folder => {
+                    const el = document.createElement('div');
+                    el.className = 'album-folder';
+                    el.innerHTML = `📁<br><b>${folder}</b>`;
+                    el.onclick = () => loadPhotos(folder);
+                    div.appendChild(el);
+                });
+            } catch(e) { div.innerHTML = '読み込みエラー'; }
+        }
+
+        // 写真読み込み
+        async function loadPhotos(folder) {
+            currentAlbum = folder;
+            const titleEl = document.getElementById('current-album-title');
+            const listEl = document.getElementById('photo-list');
+            titleEl.style.display = 'block';
+            titleEl.innerText = `📂 ${folder}`;
+            listEl.innerHTML = 'Loading...';
+            
+            const params = new URLSearchParams({ cat1: CAT1, cat2: CAT2, cat3: CAT3, folder: folder });
+            const r = await fetch(`/api/search?${params}`);
+            const data = await r.json();
+            
+            listEl.innerHTML = '';
+            data.forEach(img => {
+                const div = document.createElement('div');
+                div.className = 'photo-item';
+                div.innerHTML = `<a href="${img.url}"><img src="${img.url}"></a>`;
+                listEl.appendChild(div);
+            });
+            
+            if(lightbox) lightbox.destroy();
+            lightbox = new SimpleLightbox('#photo-list a');
+            
+            // 画面下へスクロール
+            titleEl.scrollIntoView({behavior: "smooth"});
+        }
+
+        // アップロード処理
+        const fileInput = document.getElementById('fileInput');
+        fileInput.onchange = () => document.getElementById('fileInfo').innerText = `${fileInput.files.length}枚 選択中`;
+
+        document.getElementById('uploadBtn').onclick = async () => {
+            const album = document.getElementById('albumName').value.trim();
+            if(!album) return alert('アルバム名を入力してください');
+            if(fileInput.files.length === 0) return alert('写真を選択してください');
+
+            const fd = new FormData();
+            fd.append('category1', CAT1);
+            fd.append('category2', CAT2);
+            fd.append('category3', CAT3);
+            fd.append('folderName', album);
+            for(let f of fileInput.files) fd.append('imageFiles', f);
+
+            const stat = document.getElementById('status');
+            stat.innerText = '保存中...';
+            
+            try {
+                const r = await fetch('/upload', { method: 'POST', body: fd });
+                if(!r.ok) throw new Error('失敗');
+                stat.innerText = '保存しました！';
+                fileInput.value = '';
+                document.getElementById('fileInfo').innerText = '未選択';
+                loadAlbums(); // リスト更新
+            } catch(e) { stat.innerText = 'エラーが発生しました'; }
+        };
+    </script>
+</body>
+</html>
