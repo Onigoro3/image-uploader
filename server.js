@@ -67,7 +67,7 @@ function isAuthenticated(req, res, next) {
     res.status(401).json({ message: 'ログインが必要です。' });
 }
 
-// --- DB初期化 ---
+// --- DB初期化 (★ここを修正: 足りない列を強制追加する機能を追加) ---
 const createTable = async () => {
     try {
         const client = await pool.connect();
@@ -76,32 +76,49 @@ const createTable = async () => {
             await client.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(100) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default" PRIMARY KEY, "sess" json NOT NULL, "expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE);`);
             await client.query(`CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`);
-            
-            // CSV管理テーブル
             await client.query(`CREATE TABLE IF NOT EXISTS csv_uploads (id SERIAL PRIMARY KEY, filename VARCHAR(255) NOT NULL, uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
 
-            // 商品情報テーブル
+            // 商品情報テーブル作成
             await client.query(`
                 CREATE TABLE IF NOT EXISTS product_info (
                     product_code VARCHAR(255) PRIMARY KEY,
-                    product_name VARCHAR(1024),
-                    model_num1 VARCHAR(255),
-                    model_num2 VARCHAR(255),
-                    condition VARCHAR(255),
-                    series VARCHAR(255),
-                    stock INTEGER DEFAULT 0,
-                    ec_price INTEGER DEFAULT 0,
-                    mercari_price INTEGER DEFAULT 0,
-                    image_filename VARCHAR(1024),
-                    csv_upload_id INTEGER,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             `);
 
-            // カラム追加チェック
-            const cols = ['category_1', 'category_2', 'category_3', 'folder_name'];
-            for (const col of cols) { await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='${col}') THEN ALTER TABLE images ADD COLUMN ${col} VARCHAR(100) DEFAULT 'default'; END IF; END $$;`); }
-            console.log('Database initialized.');
+            // ★修正: 画像テーブルの不足カラム追加
+            const imgCols = ['category_1', 'category_2', 'category_3', 'folder_name'];
+            for (const col of imgCols) {
+                await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='${col}') THEN ALTER TABLE images ADD COLUMN ${col} VARCHAR(100) DEFAULT 'default'; END IF; END $$;`);
+            }
+
+            // ★修正: 商品情報テーブル(product_info)の不足カラムを強制追加
+            // これにより、古いテーブルが残っていても新しい列が追加されます
+            const prodCols = [
+                { name: 'product_name', type: 'VARCHAR(1024)' },
+                { name: 'model_num1', type: 'VARCHAR(255)' },
+                { name: 'model_num2', type: 'VARCHAR(255)' },
+                { name: 'condition', type: 'VARCHAR(255)' },
+                { name: 'series', type: 'VARCHAR(255)' },
+                { name: 'stock', type: 'INTEGER DEFAULT 0' },
+                { name: 'ec_price', type: 'INTEGER DEFAULT 0' },
+                { name: 'mercari_price', type: 'INTEGER DEFAULT 0' },
+                { name: 'image_filename', type: 'VARCHAR(1024)' },
+                { name: 'csv_upload_id', type: 'INTEGER' }
+            ];
+
+            for (const col of prodCols) {
+                await client.query(`
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='${col.name}') THEN 
+                            ALTER TABLE product_info ADD COLUMN ${col.name} ${col.type}; 
+                        END IF; 
+                    END $$;
+                `);
+            }
+
+            console.log('Database initialized and migrated.');
         } finally { client.release(); }
     } catch (err) { console.error('DB Init Error:', err); }
 };
@@ -126,18 +143,12 @@ app.post('/api/auth/login', (req, res, next) => { passport.authenticate('local',
 app.post('/api/auth/logout', (req, res, next) => { req.logout((err) => { if(err)return next(err); req.session.destroy(() => { res.clearCookie('connect.sid'); res.json({message:'ログアウト'}); }); }); });
 app.get('/api/auth/check', (req, res) => { if (req.isAuthenticated()) res.json({ loggedIn: true, username: req.user.username }); else res.json({ loggedIn: false }); });
 
-const apiHandler = (fn) => async (req, res, next) => { 
-    try { await fn(req, res, next); } 
-    catch (e) { 
-        console.error("API Error:", e); 
-        res.status(500).json({ message: e.message || "Error" }); 
-    } 
-};
+const apiHandler = (fn) => async (req, res, next) => { try { await fn(req, res, next); } catch (e) { console.error("API Error:", e); res.status(500).json({ message: e.message || "Error" }); } };
 
-// ★追加: DB強制初期化ボタン用
+// ★DB強制初期化ボタン用
 app.post('/api/admin/init-db', isAuthenticated, apiHandler(async (req, res) => {
     await createTable();
-    res.json({ message: 'データベース構成を更新しました' });
+    res.json({ message: 'データベース構成を更新しました。ページをリロードしてください。' });
 }));
 
 // --- 商品管理機能 ---
@@ -184,11 +195,7 @@ app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiH
 }));
 
 app.get('/api/products/files', isAuthenticated, apiHandler(async (req, res) => {
-    // テーブルが存在しない場合の対策
-    try {
-        const { rows } = await pool.query('SELECT * FROM csv_uploads ORDER BY uploaded_at DESC');
-        res.json(rows);
-    } catch (e) { res.json([]); } // テーブルがない場合は空配列
+    try { const { rows } = await pool.query('SELECT * FROM csv_uploads ORDER BY uploaded_at DESC'); res.json(rows); } catch (e) { res.json([]); }
 }));
 
 app.delete('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) => {
@@ -216,9 +223,8 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     if (!cat1 || !cat2 || !cat3 || !folder) return res.status(400).json({message: 'カテゴリ必須'});
     const s = sort === 'title' ? 'i.title' : 'i.created_at'; const d = order === 'ASC' ? 'ASC' : 'DESC';
     
-    // ★修正: product_infoテーブルがない場合でもエラーにならないように動的チェックは難しいので、
-    // JOIN条件を厳密にしてエラー回避を試みる
-    // image_filenameが空の場合はJOINしない
+    // ★修正: テーブル結合エラー回避 (product_infoが存在しない場合でも画像は返す)
+    // LEFT JOINで、テーブルやカラムが存在しないエラーを防ぐために、まずカラム存在チェックはDB初期化で保証している前提
     let sql = `
         SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.ec_price, p.mercari_price, p.stock
         FROM images i
