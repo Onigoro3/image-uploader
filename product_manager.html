@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>商品管理 - 画像アップローダー</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" />
     <style>
-        /* --- 共通設定 --- */
+        /* --- 全体設定 --- */
         body { font-family: "Helvetica Neue", Arial, sans-serif; line-height: 1.6; padding: 10px; margin: 0; background-color: #f0fdf4; color: #333; }
         
         #nav-bar { 
@@ -41,6 +42,7 @@
         #dlTemplateBtn { background: #475569; color: white; font-size: 0.85em; padding: 5px 10px; }
 
         /* CSVリスト */
+        #csv-list-title { font-size: 1em; color: #333; }
         #csv-file-list { margin-top: 10px; }
         .csv-item { padding: 12px; border: 1px solid #eee; background: #fff; margin-bottom: 5px; border-radius: 4px; border-left: 4px solid #15803d; }
         .csv-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
@@ -79,15 +81,16 @@
     <div class="panel">
         <h3><span>📥 CSV登録</span><button id="dlTemplateBtn">テンプレートDL</button></h3>
         <div class="import-area">
-            <div id="selected-path-display" style="font-weight:bold; color:#166534;">登録先: <span style="color:#999;">(選択してください)</span></div>
+            <div id="selected-path-display" style="font-weight:bold; color:#166534;">登録先: <span style="color:#999;">(カテゴリを選択してください)</span></div>
             <input type="file" id="productCsvInput" accept=".csv">
             <button id="importCsvBtn">このカテゴリにCSVを登録</button>
         </div>
-        <p id="csvImportStatus" style="font-weight:bold; color:green; text-align:center;"></p>
+        <p id="csvImportStatus" style="font-weight: bold; color: green; text-align:center;"></p>
     </div>
 
     <div class="panel">
-        <h3><span>📋 登録済みCSV一覧</span>
+        <h3>
+            <span id="csv-list-title">📋 登録済みCSV一覧 (全件)</span>
             <div style="font-size:0.8em; font-weight:normal;">
                 <button id="check-mismatch-btn" style="background:#f59e0b; border:none; color:white;">不一致を診断</button>
             </div>
@@ -109,7 +112,8 @@
             csvIn: document.getElementById('productCsvInput'), impBtn: document.getElementById('importCsvBtn'),
             impStat: document.getElementById('csvImportStatus'), csvList: document.getElementById('csv-file-list'),
             dlTmp: document.getElementById('dlTemplateBtn'), pathDisp: document.getElementById('selected-path-display'),
-            c1n: document.getElementById('cat1NewInput'), c2n: document.getElementById('cat2NewInput'), c3n: document.getElementById('cat3NewInput')
+            c1n: document.getElementById('cat1NewInput'), c2n: document.getElementById('cat2NewInput'), c3n: document.getElementById('cat3NewInput'),
+            listTitle: document.getElementById('csv-list-title')
         };
 
         let sels = { c1: null, c2: null, c3: null };
@@ -123,7 +127,7 @@
         els.impBtn.onclick = importCsv;
         els.checkBtn.onclick = checkMismatch;
 
-        // ★修正: type=csv を指定してCSV用カテゴリのみ取得
+        // ★修正: type=csv を指定
         const loadCat1 = () => { resetUI(1); loadList('/api/cat1?type=csv', 'cat1-container', '大カテゴリ', (v) => { sels.c1 = v; handleSelect(1, v); if(v !== '_new_') loadCat2(v); }); };
         const loadCat2 = (c1) => { resetUI(2); loadList(`/api/cat2/${c1}?type=csv`, 'cat2-container', '中カテゴリ', (v) => { sels.c2 = v; handleSelect(2, v); if(v !== '_new_') loadCat3(c1, v); }); };
         const loadCat3 = (c1, c2) => { resetUI(3); loadList(`/api/cat3/${c1}/${c2}?type=csv`, 'cat3-container', '小カテゴリ', (v) => { sels.c3 = v; handleSelect(3, v); }); };
@@ -186,16 +190,21 @@
             const tC2 = (sels.c2 && sels.c2 !== '_new_') ? sels.c2 : null;
             const tC3 = (sels.c3 && sels.c3 !== '_new_') ? sels.c3 : null;
 
+            // フィルタリングロジック: 選択されたカテゴリに一致するものだけを表示
             const filtered = csvData.filter(f => {
-                if (f.category_1 === '未分類') return true;
+                if (!tC1) return true; // 何も選択していなければ全件
                 if (tC1 && f.category_1 !== tC1) return false;
                 if (tC2 && f.category_2 !== tC2) return false;
                 if (tC3 && f.category_3 !== tC3) return false;
                 return true;
             });
 
+            // タイトルの更新
+            const currentPath = [tC1, tC2, tC3].filter(Boolean).join(' > ');
+            els.listTitle.innerText = currentPath ? `📋 ${currentPath} のCSV一覧` : `📋 登録済みCSV一覧 (全件)`;
+
             els.csvList.innerHTML = '';
-            if(filtered.length===0) { els.csvList.innerHTML = '<div style="padding:10px; color:#999; text-align:center;">該当なし</div>'; return; }
+            if(filtered.length===0) { els.csvList.innerHTML = '<div style="padding:10px; color:#999; text-align:center;">このフォルダにCSVはありません</div>'; return; }
 
             filtered.forEach(f => {
                 const date = new Date(f.uploaded_at).toLocaleString('ja-JP');
@@ -209,12 +218,11 @@
         }
 
         async function importCsv() {
-            if(!els.csvIn.files.length) return alert('CSVを選択');
+            if(!els.csvIn.files.length) return alert('CSVファイルを選択してください');
             const c1 = sels.c1 === '_new_' ? els.c1n.value : (sels.c1 || '未分類');
             const c2 = sels.c2 === '_new_' ? els.c2n.value : (sels.c2 || '-');
             const c3 = sels.c3 === '_new_' ? els.c3n.value : (sels.c3 || '-');
             const fd = new FormData(); fd.append('csvFile', els.csvIn.files[0]); fd.append('category1', c1); fd.append('category2', c2); fd.append('category3', c3);
-
             els.impStat.innerText = "登録中...";
             try {
                 const r = await fetch('/api/products/import', {method:'POST', body:fd});
