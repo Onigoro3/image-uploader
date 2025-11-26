@@ -12,6 +12,10 @@
         .panel { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; max-width: 800px; margin-left: auto; margin-right: auto; }
         h3 { color: #166534; border-bottom: 2px solid #bbf7d0; padding-bottom: 10px; margin-top: 0; }
         
+        /* 入力系 */
+        select, input[type="text"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 10px; width: 100%; box-sizing: border-box; }
+        .cat-group { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        
         /* ステータス */
         #db-stats { display: flex; justify-content: space-around; background: #e8f5e9; padding: 15px; border-radius: 6px; margin-bottom: 20px; }
         #db-stats div { text-align: center; }
@@ -20,20 +24,21 @@
         #check-mismatch-btn { background: #6c757d; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
 
         /* インポートエリア */
-        .import-area { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; padding: 15px; background: #f9f9f9; border-radius: 6px; }
-        input[type="file"] { flex-grow: 1; }
+        .import-area { padding: 15px; background: #f9f9f9; border-radius: 6px; border: 1px solid #eee; }
+        input[type="file"] { margin-bottom: 10px; }
         button { padding: 10px 20px; cursor: pointer; border-radius: 4px; border: none; font-weight: bold; }
-        #importCsvBtn { background: #15803d; color: white; }
+        #importCsvBtn { background: #15803d; color: white; width: 100%; }
         #dlTemplateBtn { background: #475569; color: white; font-size: 0.9em; }
 
         /* リスト */
         #csv-file-list { margin-top: 10px; }
-        .csv-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; background: #fff; }
-        .csv-item:last-child { border-bottom: none; }
-        .csv-info { display: flex; flex-direction: column; }
-        .csv-name { font-weight: bold; }
-        .csv-date { font-size: 0.8em; color: #888; }
-        .csv-actions button { margin-left: 5px; padding: 5px 10px; font-size: 12px; }
+        .csv-item { padding: 12px; border: 1px solid #eee; background: #fff; margin-bottom: 5px; border-radius: 4px; }
+        .csv-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
+        .csv-meta { font-size: 0.85em; color: #666; margin-top: 5px; display: flex; gap: 10px; align-items: center; }
+        .csv-tag { background: #e2e8f0; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; }
+        .csv-actions button { margin-left: 5px; padding: 4px 8px; font-size: 12px; }
+
+        @media (max-width: 600px) { .cat-group { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -61,17 +66,27 @@
         </div>
         
         <div class="import-area">
+            <label style="font-weight:bold; display:block; margin-bottom:5px;">カテゴリを選択 (任意)</label>
+            <div class="cat-group">
+                <input type="text" id="reg-c1" placeholder="大カテゴリ (例: ポケカ)">
+                <input type="text" id="reg-c2" placeholder="中カテゴリ (例: SV1)">
+                <input type="text" id="reg-c3" placeholder="小カテゴリ">
+            </div>
+
             <input type="file" id="productCsvInput" accept=".csv">
-            <button id="importCsvBtn">登録実行</button>
+            <button id="importCsvBtn">CSVを登録する</button>
         </div>
         <p id="csvImportStatus" style="font-weight: bold; color: green;"></p>
+    </div>
 
-        <h4>登録履歴・削除</h4>
+    <div class="panel">
+        <h3>登録済みCSV一覧</h3>
+        <input type="text" id="filter-input" placeholder="カテゴリやファイル名で絞り込み..." style="margin-bottom:10px;">
+        
         <div id="csv-file-list">読み込み中...</div>
     </div>
 
     <script>
-        // 認証チェック
         fetch('/api/auth/check').then(r=>r.json()).then(d=>{if(!d.loggedIn)location.href='/login'});
 
         const els = {
@@ -79,8 +94,12 @@
             checkBtn: document.getElementById('check-mismatch-btn'),
             csvIn: document.getElementById('productCsvInput'), impBtn: document.getElementById('importCsvBtn'),
             impStat: document.getElementById('csvImportStatus'), csvList: document.getElementById('csv-file-list'),
-            dlTmp: document.getElementById('dlTemplateBtn')
+            dlTmp: document.getElementById('dlTemplateBtn'),
+            regC1: document.getElementById('reg-c1'), regC2: document.getElementById('reg-c2'), regC3: document.getElementById('reg-c3'),
+            filter: document.getElementById('filter-input')
         };
+
+        let csvData = [];
 
         document.addEventListener('DOMContentLoaded', () => {
             loadStats();
@@ -90,6 +109,7 @@
         els.dlTmp.onclick = () => location.href = '/api/products/template';
         els.impBtn.onclick = importCsv;
         els.checkBtn.onclick = checkMismatch;
+        els.filter.oninput = renderCsvList;
 
         async function loadStats() {
             try {
@@ -104,7 +124,6 @@
                 let msg = '【診断結果】\n\n';
                 if(d.unlinkedProducts.length) msg += '⚠ 商品データはあるが画像がない (例):\n' + d.unlinkedProducts.map(p=>`・${p.product_name}`).join('\n') + '\n\n';
                 else msg += '✅ 商品データは全て紐付いています。\n\n';
-                
                 if(d.unlinkedImages.length) msg += '⚠ 画像はあるが商品データがない (例):\n' + d.unlinkedImages.map(i=>`・${i.title.split('/').pop()}`).join('\n');
                 alert(msg);
             } catch(e) { alert('エラー'); }
@@ -112,7 +131,12 @@
 
         async function importCsv() {
             if(!els.csvIn.files.length) return alert('CSVファイルを選択してください');
-            const fd = new FormData(); fd.append('csvFile', els.csvIn.files[0]);
+            const fd = new FormData(); 
+            fd.append('csvFile', els.csvIn.files[0]);
+            fd.append('category1', els.regC1.value);
+            fd.append('category2', els.regC2.value);
+            fd.append('category3', els.regC3.value);
+
             els.impStat.innerText = "登録中...";
             try {
                 const r = await fetch('/api/products/import', {method:'POST', body:fd});
@@ -127,22 +151,67 @@
         async function loadCsvList() {
             try {
                 const list = await (await fetch('/api/products/files')).json();
-                els.csvList.innerHTML = '';
-                if(list.length===0) return els.csvList.innerHTML = '<p style="color:#999; text-align:center;">履歴なし</p>';
+                csvData = list;
+                renderCsvList();
+            } catch(e) { els.csvList.innerText = 'エラー'; }
+        }
+
+        function renderCsvList() {
+            const term = els.filter.value.toLowerCase();
+            const filtered = csvData.filter(f => 
+                (f.filename && f.filename.toLowerCase().includes(term)) || 
+                (f.category_1 && f.category_1.toLowerCase().includes(term)) ||
+                (f.category_2 && f.category_2.toLowerCase().includes(term))
+            );
+
+            els.csvList.innerHTML = '';
+            if(filtered.length===0) return els.csvList.innerHTML = '<p style="color:#999; text-align:center;">該当なし</p>';
+
+            filtered.forEach(f => {
+                const date = new Date(f.uploaded_at).toLocaleString('ja-JP');
+                const catLabel = [f.category_1, f.category_2, f.category_3].filter(c=>c && c!=='未分類' && c!=='-').join(' > ') || '未分類';
                 
-                list.forEach(f => {
-                    const date = new Date(f.uploaded_at).toLocaleString('ja-JP');
-                    const div = document.createElement('div'); div.className = 'csv-item';
-                    div.innerHTML = `
-                        <div class="csv-info"><span class="csv-name">${f.filename}</span><span class="csv-date">${date}</span></div>
+                const div = document.createElement('div'); div.className = 'csv-item';
+                div.innerHTML = `
+                    <div class="csv-header">
+                        <span>${f.filename}</span>
                         <div class="csv-actions">
+                            <button onclick="editCsv(${f.id}, '${f.filename}', '${f.category_1}', '${f.category_2}', '${f.category_3}')" style="background:#ffc107; color:#000;">編集</button>
                             <button onclick="window.location.href='/api/products/files/${f.id}/download'" style="background:#17a2b8; color:white;">DL</button>
                             <button onclick="delCsv(${f.id})" style="background:#dc3545; color:white;">削除</button>
                         </div>
-                    `;
-                    els.csvList.appendChild(div);
-                });
-            } catch(e) { els.csvList.innerText = 'エラー'; }
+                    </div>
+                    <div class="csv-meta">
+                        <span class="csv-tag">📂 ${catLabel}</span>
+                        <span>📅 ${date}</span>
+                    </div>
+                `;
+                els.csvList.appendChild(div);
+            });
+        }
+
+        async function editCsv(id, oldName, oldC1, oldC2, oldC3) {
+            const newName = prompt("ファイル名を変更:", oldName);
+            if(newName === null) return;
+            const newC1 = prompt("大カテゴリ:", oldC1 === 'null' ? '' : oldC1);
+            const newC2 = prompt("中カテゴリ:", oldC2 === 'null' ? '' : oldC2);
+            const newC3 = prompt("小カテゴリ:", oldC3 === 'null' ? '' : oldC3);
+
+            if(newName) {
+                try {
+                    await fetch(`/api/products/files/${id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            filename: newName, 
+                            category1: newC1 || '-', 
+                            category2: newC2 || '-', 
+                            category3: newC3 || '-' 
+                        })
+                    });
+                    loadCsvList();
+                } catch(e) { alert('変更失敗'); }
+            }
         }
 
         async function delCsv(id) {
