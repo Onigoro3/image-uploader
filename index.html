@@ -16,6 +16,7 @@
         #username-display { margin-right: 10px; font-weight: bold; font-size: 0.9em; }
         #auth-status button { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-left: 5px; }
         #personal-btn { background: #17a2b8 !important; }
+        #fix-db-btn { background: #ffc107 !important; color: #000 !important; } /* DB修復ボタン */
         
         #main-content { margin-top: 60px; }
         hr { margin: 2em 0; border: 0; border-top: 1px solid #eee; }
@@ -31,7 +32,6 @@
         #gallery-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
         .gallery-column { border: 1px solid #eee; padding: 5px; border-radius: 8px; background: #fafafa; height: 200px; overflow-y: auto; }
         
-        /* CSV管理エリア */
         #csv-manage-section { background: #e8f5e9; padding: 15px; border-radius: 8px; margin-top: 15px; border: 1px solid #c8e6c9; }
         #csv-file-list { margin-top: 10px; max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 5px; border-radius: 4px; }
         .csv-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee; font-size: 0.9em; }
@@ -64,6 +64,7 @@
 <body>
     <div id="auth-status">
         <span id="username-display">...</span>
+        <button id="fix-db-btn" title="テーブル作成を強制実行">⚠️DB修復</button>
         <button id="personal-btn" onclick="location.href='/personal'">個人アルバム</button>
         <button id="logoutButton">ログアウト</button>
     </div>
@@ -136,6 +137,17 @@
             await fetch('/api/auth/logout', { method: 'POST' }); window.location.href = '/login';
         });
 
+        // ★DB修復ボタン
+        document.getElementById('fix-db-btn').addEventListener('click', async () => {
+            if(!confirm('データベース構成を更新しますか？\n(商品情報テーブルなどを作成し直します)')) return;
+            try {
+                const r = await fetch('/api/admin/init-db', { method: 'POST' });
+                const d = await r.json();
+                alert(d.message);
+                location.reload();
+            } catch(e) { alert('エラーが発生しました'); }
+        });
+
         const els = {
             file: document.getElementById('imageInput'),
             c1: document.getElementById('cat1Select'), c1n: document.getElementById('cat1NewInput'),
@@ -161,7 +173,6 @@
             els.impBtn.onclick = importCsv;
         }
 
-        // --- CSV管理機能 ---
         async function loadCsvList() {
             try {
                 const r = await fetch('/api/products/files');
@@ -191,10 +202,11 @@
             els.impStat.innerText = "登録中...";
             try {
                 const r = await fetch('/api/products/import', {method:'POST', body:fd});
-                if(!r.ok) throw new Error('Err');
-                els.impStat.innerText = "登録完了"; loadCsvList(); 
+                const d = await r.json();
+                if(!r.ok) throw new Error(d.message || 'Error');
+                els.impStat.innerText = d.message; els.impStat.style.color = "green"; loadCsvList(); 
                 if(sels.f) loadImages(sels.f, els.search.value);
-            } catch(e){ els.impStat.innerText = "エラー"; }
+            } catch(e){ els.impStat.innerText = `エラー: ${e.message}`; els.impStat.style.color="red"; }
         }
 
         function downloadCsvFile(id) { window.location.href = `/api/products/files/${id}/download`; }
@@ -206,7 +218,6 @@
             } catch(e){ alert('エラー'); }
         }
 
-        // --- 既存ロジック (画像表示部分のみ抜粋修正) ---
         async function loadImages(f, q='') {
             if(!f) return;
             els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center;">読込中...</p>';
@@ -214,6 +225,8 @@
             try {
                 const r = await fetch(`/api/search?${p}`);
                 const d = await r.json();
+                if(!r.ok) throw new Error(d.message || 'Error');
+                
                 els.gal.innerHTML = '';
                 if(d.length===0) els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center; color:#888;">画像なし</p>';
                 
@@ -221,7 +234,6 @@
                     const div = document.createElement('div'); div.className = 'image-item';
                     const name = img.title.split('/').pop();
                     
-                    // 商品情報
                     let info = '';
                     if(img.product_name) {
                         info = `<div class="product-info">
@@ -245,10 +257,9 @@
                 lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link');
                 els.csv.style.visibility = 'visible';
                 els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
-            } catch(e) { els.gal.innerHTML = '<p>エラー</p>'; }
+            } catch(e) { els.gal.innerHTML = `<p style="color:red;">読み込み失敗: ${e.message}</p>`; }
         }
 
-        // (以下、変更なしの関数は省略せず記述)
         async function loadList(u,i,t,cb){const d=document.getElementById(i);d.innerHTML=`<h4>${t}</h4>`;try{const r=await fetch(u);const j=await r.json();j.forEach(v=>{const e=document.createElement('div');e.className='gallery-item';e.innerText=v;e.onclick=()=>{d.querySelectorAll('.gallery-item').forEach(x=>x.classList.remove('active'));e.classList.add('active');cb(v);};d.appendChild(e);});}catch(e){}}
         async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--</option>';j.forEach(v=>s.innerHTML+=`<option value="${v}">${v}</option>`);s.innerHTML+='<option value="_new_">+新</option>';}catch(e){}}
         const loadCat1=()=>{resetUI(1);loadList('/api/cat1','cat1-container','大',v=>{sels.c1=v;els.c1.value=v;checkNew(els.c1,els.c1n);loadCat2(v);});loadOpts('/api/cat1',els.c1);};
