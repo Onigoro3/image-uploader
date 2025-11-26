@@ -145,7 +145,7 @@
                 els.impStat.innerText = d.message;
                 els.csvIn.value = '';
                 loadCsvList(); loadStats();
-            } catch(e) { els.impStat.innerText = "エラー: " + e.message; els.impStat.style.color="red"; }
+            } catch(e) { els.impStat.innerText = "エラー : " + e.message; els.impStat.style.color="red"; }
         }
 
         async function loadCsvList() {

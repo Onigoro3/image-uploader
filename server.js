@@ -67,34 +67,52 @@ function isAuthenticated(req, res, next) {
     res.status(401).json({ message: 'ログインが必要です。' });
 }
 
-// --- DB初期化 ---
+// --- DB初期化 (強力な修復機能付き) ---
 const createTable = async () => {
     try {
         const client = await pool.connect();
         try {
-            await client.query(`CREATE TABLE IF NOT EXISTS images (id SERIAL PRIMARY KEY, title VARCHAR(1024) NOT NULL, url VARCHAR(1024) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, category_1 VARCHAR(100) DEFAULT 'default_cat1', category_2 VARCHAR(100) DEFAULT 'default_cat2', category_3 VARCHAR(100) DEFAULT 'default_cat3', folder_name VARCHAR(100) DEFAULT 'default_folder');`);
+            // 1. 基本テーブル作成
+            await client.query(`CREATE TABLE IF NOT EXISTS images (id SERIAL PRIMARY KEY, title VARCHAR(1024) NOT NULL, url VARCHAR(1024) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(100) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default" PRIMARY KEY, "sess" json NOT NULL, "expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE);`);
             await client.query(`CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`);
             
-            // CSV管理テーブル (カテゴリ列を追加)
-            await client.query(`CREATE TABLE IF NOT EXISTS csv_uploads (id SERIAL PRIMARY KEY, filename VARCHAR(255) NOT NULL, uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
-            const csvCols = ['category_1', 'category_2', 'category_3'];
-            for (const col of csvCols) {
-                await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='csv_uploads' AND column_name='${col}') THEN ALTER TABLE csv_uploads ADD COLUMN ${col} VARCHAR(100) DEFAULT '未分類'; END IF; END $$;`);
-            }
-
-            // 商品情報テーブル
+            // 2. 商品情報テーブル
             await client.query(`CREATE TABLE IF NOT EXISTS product_info (product_code VARCHAR(255) PRIMARY KEY, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
-            await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='code') THEN ALTER TABLE product_info RENAME COLUMN code TO product_code; END IF; END $$;`);
+            
+            // 3. CSV管理テーブル
+            await client.query(`CREATE TABLE IF NOT EXISTS csv_uploads (id SERIAL PRIMARY KEY, filename VARCHAR(255) NOT NULL, uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
 
-            const imgCols = ['category_1', 'category_2', 'category_3', 'folder_name'];
-            for (const col of imgCols) { await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='${col}') THEN ALTER TABLE images ADD COLUMN ${col} VARCHAR(100) DEFAULT 'default'; END IF; END $$;`); }
+            // 4. カラムの追加・修復 (不足している列があれば足す)
+            const addCol = async (table, col, type) => {
+                await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='${table}' AND column_name='${col}') THEN ALTER TABLE ${table} ADD COLUMN ${col} ${type}; END IF; END $$;`);
+            };
 
-            const prodCols = [{name:'product_name',type:'VARCHAR(1024)'},{name:'model_num1',type:'VARCHAR(255)'},{name:'model_num2',type:'VARCHAR(255)'},{name:'condition',type:'VARCHAR(255)'},{name:'series',type:'VARCHAR(255)'},{name:'stock',type:'INTEGER DEFAULT 0'},{name:'ec_price',type:'INTEGER DEFAULT 0'},{name:'mercari_price',type:'INTEGER DEFAULT 0'},{name:'image_filename',type:'VARCHAR(1024)'},{name:'csv_upload_id',type:'INTEGER'}];
-            for (const col of prodCols) { await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='${col.name}') THEN ALTER TABLE product_info ADD COLUMN ${col.name} ${col.type}; END IF; END $$;`); }
+            // imagesテーブルの列
+            await addCol('images', 'category_1', 'VARCHAR(100) DEFAULT \'default_cat1\'');
+            await addCol('images', 'category_2', 'VARCHAR(100) DEFAULT \'default_cat2\'');
+            await addCol('images', 'category_3', 'VARCHAR(100) DEFAULT \'default_cat3\'');
+            await addCol('images', 'folder_name', 'VARCHAR(100) DEFAULT \'default_folder\'');
 
-            console.log('Database initialized.');
+            // product_infoテーブルの列
+            await addCol('product_info', 'product_name', 'VARCHAR(1024)');
+            await addCol('product_info', 'model_num1', 'VARCHAR(255)');
+            await addCol('product_info', 'model_num2', 'VARCHAR(255)');
+            await addCol('product_info', 'condition', 'VARCHAR(255)');
+            await addCol('product_info', 'series', 'VARCHAR(255)');
+            await addCol('product_info', 'stock', 'INTEGER DEFAULT 0');
+            await addCol('product_info', 'ec_price', 'INTEGER DEFAULT 0');
+            await addCol('product_info', 'mercari_price', 'INTEGER DEFAULT 0');
+            await addCol('product_info', 'image_filename', 'VARCHAR(1024)');
+            await addCol('product_info', 'csv_upload_id', 'INTEGER');
+
+            // csv_uploadsテーブルの列 (フォルダ分け用)
+            await addCol('csv_uploads', 'category_1', 'VARCHAR(100) DEFAULT \'未分類\'');
+            await addCol('csv_uploads', 'category_2', 'VARCHAR(100) DEFAULT \'-\'');
+            await addCol('csv_uploads', 'category_3', 'VARCHAR(100) DEFAULT \'-\'');
+
+            console.log('Database schema synced.');
         } finally { client.release(); }
     } catch (err) { console.error('DB Init Error:', err); }
 };
@@ -143,7 +161,6 @@ app.get('/api/products/template', isAuthenticated, (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="template.csv"'); res.send('\uFEFF' + header + example);
 });
 
-// ★修正: CSVインポート時にカテゴリも保存
 app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'CSVファイルがありません' });
     const { category1, category2, category3 } = req.body;
@@ -154,7 +171,6 @@ app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiH
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        // ★修正: カテゴリを含めてINSERT
         const fileRes = await client.query('INSERT INTO csv_uploads (filename, category_1, category_2, category_3) VALUES ($1, $2, $3, $4) RETURNING id', [req.file.originalname, c1, c2, c3]);
         const uploadId = fileRes.rows[0].id;
         for (const row of records) {
@@ -167,25 +183,20 @@ app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiH
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }));
 
-// ★修正: ファイル一覧取得（フィルタリング対応はフロントで行うため全件取得）
 app.get('/api/products/files', isAuthenticated, apiHandler(async (req, res) => {
     try { const { rows } = await pool.query('SELECT * FROM csv_uploads ORDER BY uploaded_at DESC'); res.json(rows); } catch (e) { res.json([]); }
 }));
 
-// ★追加: CSVファイル情報（名前・カテゴリ）の編集API
 app.put('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) => {
     const { filename, category1, category2, category3 } = req.body;
-    await pool.query(
-        'UPDATE csv_uploads SET filename = $1, category_1 = $2, category_2 = $3, category_3 = $4 WHERE id = $5',
-        [filename, category1, category2, category3, req.params.id]
-    );
+    await pool.query('UPDATE csv_uploads SET filename = $1, category_1 = $2, category_2 = $3, category_3 = $4 WHERE id = $5', [filename, category1, category2, category3, req.params.id]);
     res.json({ message: '変更しました' });
 }));
 
 app.delete('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) => { const client = await pool.connect(); try { await client.query('BEGIN'); await client.query('DELETE FROM product_info WHERE csv_upload_id = $1', [req.params.id]); await client.query('DELETE FROM csv_uploads WHERE id = $1', [req.params.id]); await client.query('COMMIT'); res.json({ message: '削除しました' }); } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
 app.get('/api/products/files/:id/download', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query(`SELECT product_name, model_num1, model_num2, condition, series, stock, ec_price, mercari_price, product_code, image_filename FROM product_info WHERE csv_upload_id = $1 ORDER BY product_code`, [req.params.id]); if (rows.length === 0) return res.status(404).send('Data not found'); let csv = "商品名,型番1,型番2,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名\n"; rows.forEach(r => { csv += `"${r.product_name}","${r.model_num1}","${r.model_num2||''}","${r.condition}","${r.series}",${r.stock},${r.ec_price},${r.mercari_price},"${r.product_code}","${r.image_filename}"\n`; }); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="backup_${req.params.id}.csv"`); res.status(200).send('\uFEFF' + csv); }));
 
-// --- その他のAPIは変更なし ---
+// --- その他API ---
 app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     const { cat1, cat2, cat3, folder, q, sort, order } = req.query;
     if (!q && (!cat1 || !cat2 || !cat3 || !folder)) return res.status(400).json({message: 'カテゴリを選択するか、検索ワードを入力してください'});
