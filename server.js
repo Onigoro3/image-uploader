@@ -85,36 +85,13 @@ const createTable = async () => {
                 );
             `);
 
-            await client.query(`
-                DO $$
-                BEGIN
-                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='code') THEN
-                        ALTER TABLE product_info RENAME COLUMN code TO product_code;
-                    END IF;
-                END $$;
-            `);
-
+            await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='code') THEN ALTER TABLE product_info RENAME COLUMN code TO product_code; END IF; END $$;`);
+            
             const imgCols = ['category_1', 'category_2', 'category_3', 'folder_name'];
-            for (const col of imgCols) {
-                await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='${col}') THEN ALTER TABLE images ADD COLUMN ${col} VARCHAR(100) DEFAULT 'default'; END IF; END $$;`);
-            }
+            for (const col of imgCols) { await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='images' AND column_name='${col}') THEN ALTER TABLE images ADD COLUMN ${col} VARCHAR(100) DEFAULT 'default'; END IF; END $$;`); }
 
-            const prodCols = [
-                { name: 'product_name', type: 'VARCHAR(1024)' },
-                { name: 'model_num1', type: 'VARCHAR(255)' },
-                { name: 'model_num2', type: 'VARCHAR(255)' },
-                { name: 'condition', type: 'VARCHAR(255)' },
-                { name: 'series', type: 'VARCHAR(255)' },
-                { name: 'stock', type: 'INTEGER DEFAULT 0' },
-                { name: 'ec_price', type: 'INTEGER DEFAULT 0' },
-                { name: 'mercari_price', type: 'INTEGER DEFAULT 0' },
-                { name: 'image_filename', type: 'VARCHAR(1024)' },
-                { name: 'csv_upload_id', type: 'INTEGER' }
-            ];
-
-            for (const col of prodCols) {
-                await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='${col.name}') THEN ALTER TABLE product_info ADD COLUMN ${col.name} ${col.type}; END IF; END $$;`);
-            }
+            const prodCols = [{name:'product_name',type:'VARCHAR(1024)'},{name:'model_num1',type:'VARCHAR(255)'},{name:'model_num2',type:'VARCHAR(255)'},{name:'condition',type:'VARCHAR(255)'},{name:'series',type:'VARCHAR(255)'},{name:'stock',type:'INTEGER DEFAULT 0'},{name:'ec_price',type:'INTEGER DEFAULT 0'},{name:'mercari_price',type:'INTEGER DEFAULT 0'},{name:'image_filename',type:'VARCHAR(1024)'},{name:'csv_upload_id',type:'INTEGER'}];
+            for (const col of prodCols) { await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='${col.name}') THEN ALTER TABLE product_info ADD COLUMN ${col.name} ${col.type}; END IF; END $$;`); }
 
             console.log('Database initialized.');
         } finally { client.release(); }
@@ -129,6 +106,9 @@ app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'login.html'))
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'register.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/personal', (req, res) => res.sendFile(path.join(__dirname, 'personal.html')));
+
+// ★追加: 商品管理ページへのルート
+app.get('/product-manager', (req, res) => res.sendFile(path.join(__dirname, 'product_manager.html')));
 
 // 認証API
 app.post('/api/auth/register', async (req, res) => {
@@ -145,48 +125,34 @@ const apiHandler = (fn) => async (req, res, next) => { try { await fn(req, res, 
 
 app.post('/api/admin/init-db', isAuthenticated, apiHandler(async (req, res) => { await createTable(); res.json({ message: 'データベース構成を更新しました。' }); }));
 
-// --- ステータス確認API (★修正) ---
+// --- ステータス確認API ---
 app.get('/api/products/stats', isAuthenticated, apiHandler(async (req, res) => {
     const imgCount = (await pool.query('SELECT COUNT(*) FROM images')).rows[0].count;
     const prodCount = (await pool.query('SELECT COUNT(*) FROM product_info')).rows[0].count;
-    // 紐付け成功数
     const linkedCount = (await pool.query(`
         SELECT COUNT(DISTINCT i.id) FROM images i
-        JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename))
+        JOIN product_info p ON (
+            (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) OR
+            (p.product_code IS NOT NULL AND p.product_code <> '' AND i.title LIKE '%' || TRIM(p.product_code) || '%') OR
+            (p.model_num1 IS NOT NULL AND p.model_num1 <> '' AND i.title LIKE '%' || TRIM(p.model_num1) || '%')
+        )
     `)).rows[0].count;
     res.json({ images: imgCount, products: prodCount, linked: linkedCount });
 }));
 
-// --- ★追加: 不一致データ診断API ---
 app.get('/api/debug/mismatch', isAuthenticated, apiHandler(async (req, res) => {
-    // 紐付いていない商品（CSV側）のサンプル5件
     const prodRows = await pool.query(`
-        SELECT product_name, image_filename 
+        SELECT product_name, image_filename, product_code, model_num1 
         FROM product_info p 
         WHERE NOT EXISTS (
             SELECT 1 FROM images i 
-            WHERE p.image_filename IS NOT NULL AND p.image_filename <> '' 
-            AND i.title LIKE '%' || TRIM(p.image_filename)
+            WHERE (p.image_filename IS NOT NULL AND i.title LIKE '%' || TRIM(p.image_filename))
+            OR (p.product_code IS NOT NULL AND i.title LIKE '%' || TRIM(p.product_code) || '%')
         ) 
         LIMIT 5
     `);
-    
-    // 紐付いていない画像（アップロード側）のサンプル5件
-    const imgRows = await pool.query(`
-        SELECT title 
-        FROM images i 
-        WHERE NOT EXISTS (
-            SELECT 1 FROM product_info p 
-            WHERE p.image_filename IS NOT NULL AND p.image_filename <> '' 
-            AND i.title LIKE '%' || TRIM(p.image_filename)
-        ) 
-        LIMIT 5
-    `);
-
-    res.json({
-        unlinkedProducts: prodRows.rows,
-        unlinkedImages: imgRows.rows
-    });
+    const imgRows = await pool.query(`SELECT title FROM images i ORDER BY created_at DESC LIMIT 5`);
+    res.json({ unlinkedProducts: prodRows.rows, recentImages: imgRows.rows });
 }));
 
 app.get('/api/products/template', isAuthenticated, (req, res) => {
@@ -198,15 +164,7 @@ app.get('/api/products/template', isAuthenticated, (req, res) => {
 app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'CSVファイルがありません' });
     const csvData = req.file.buffer.toString('utf-8').replace(/^\uFEFF/, '');
-    
-    // ★修正: trim: true を追加して空白を除去
-    const records = parse(csvData, { 
-        columns: ['product_name','model_num1','model_num2','condition','series','stock','ec_price','mercari_price','product_code','image_filename'], 
-        from_line: 2, 
-        skip_empty_lines: true,
-        trim: true // ここが重要
-    });
-
+    const records = parse(csvData, { columns: ['product_name','model_num1','model_num2','condition','series','stock','ec_price','mercari_price','product_code','image_filename'], from_line: 2, skip_empty_lines: true, trim: true });
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -234,7 +192,11 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     let sql = `
         SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.ec_price, p.mercari_price, p.stock
         FROM images i
-        LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename))
+        LEFT JOIN product_info p ON (
+            (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) OR
+            (p.product_code IS NOT NULL AND p.product_code <> '' AND i.title LIKE '%' || TRIM(p.product_code) || '%') OR
+            (p.model_num1 IS NOT NULL AND p.model_num1 <> '' AND i.title LIKE '%' || TRIM(p.model_num1) || '%')
+        )
         WHERE 1=1
     `;
     let params = []; let pIdx = 1;
@@ -255,6 +217,7 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     res.json(rows);
 }));
 
+// --- その他 ---
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), apiHandler(async (req, res) => {
     const { category1, category2, category3, folderName } = req.body;
     if (!req.files || req.files.length === 0) return res.status(400).json({ message: 'No files' });
