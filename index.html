@@ -48,19 +48,25 @@
         .gallery-item.active { background-color: #007bff; color: white; border-color: #007bff; }
         
         #search-section { margin-top: 20px; border-top: 2px solid #eee; padding-top: 15px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; margin-top: 15px; }
+        #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-top: 15px; }
         
-        /* PDF表示用スタイル */
-        .image-item { border: 1px solid #ddd; border-radius: 4px; padding: 3px; background: #fff; overflow: hidden; }
+        .image-item { border: 1px solid #ddd; border-radius: 4px; padding: 3px; background: #fff; overflow: hidden; position: relative; }
         .gallery-image { width: 100%; aspect-ratio: 1/1; object-fit: cover; display: block; border-radius: 2px; }
         .pdf-icon { 
             width: 100%; aspect-ratio: 1/1; display: flex; flex-direction: column; 
             justify-content: center; align-items: center; background: #ffecec; color: #d32f2f; 
             font-weight: bold; font-size: 0.9em; text-decoration: none;
         }
+        /* 商品情報オーバーレイ */
+        .product-info { font-size: 0.75em; padding: 3px; line-height: 1.3; border-top: 1px solid #eee; }
+        .product-name { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #333; }
+        .product-price { color: #d32f2f; font-weight: bold; }
 
         .new-input { display: none; margin-top: 5px; }
         #csvDownloader { display: inline-block; padding: 5px 10px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-size: 12px; visibility: hidden; }
+        
+        /* CSV登録エリア */
+        #csv-import-section { margin-top: 15px; padding: 10px; background: #e8f5e9; border-radius: 8px; display: flex; align-items: center; gap: 10px; border: 1px solid #c8e6c9; }
         
         .action-buttons { display: flex; gap: 5px; }
         .delete-btn { border: none; border-radius: 3px; width: 24px; height: 24px; background: #dc3545; color: white; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
@@ -71,9 +77,7 @@
             #uploadStatus { grid-column: span 1 !important; }
             #gallery-section { grid-template-columns: 1fr 1fr; }
             #search-section { flex-direction: column; align-items: stretch; }
-            #search-section input { width: 100% !important; }
-            #sort-controls { display: flex; justify-content: space-between; gap: 5px; }
-            #sort-controls select { flex: 1; }
+            #csv-import-section { flex-direction: column; align-items: stretch; }
         }
     </style>
 </head>
@@ -104,6 +108,13 @@
             <p id="uploadStatus"></p>
         </div>
 
+        <div id="csv-import-section">
+            <span style="font-weight:bold;">📄 商品情報CSV登録:</span>
+            <input type="file" id="productCsvInput" accept=".csv" style="width:auto;">
+            <button id="importCsvBtn" style="background:#6610f2; color:white; border:none;">登録</button>
+            <span id="csvImportStatus" style="font-size:0.9em;"></span>
+        </div>
+
         <hr>
         <h3>履歴・ギャラリー <a href="#" id="csvDownloader">CSV保存</a> <span id="csv-status-text" style="font-size:0.8em; color:#666;"></span></h3>
         
@@ -115,7 +126,7 @@
         </div>
 
         <div id="search-section" style="display: none;">
-            <input type="search" id="searchInput" placeholder="ファイル名で検索...">
+            <input type="search" id="searchInput" placeholder="ファイル名・商品名・型番で検索...">
             <div id="sort-controls"> 
                 <select id="sortBy"><option value="created_at">日付順</option><option value="title">名前順</option></select> 
                 <select id="sortOrder"><option value="DESC">新しい順</option><option value="ASC">古い順</option></select> 
@@ -153,77 +164,73 @@
             gal: document.getElementById('image-gallery-container'),
             csv: document.getElementById('csvDownloader'), csvStat: document.getElementById('csv-status-text'),
             searchSec: document.getElementById('search-section'), search: document.getElementById('searchInput'),
-            sort: document.getElementById('sortBy'), order: document.getElementById('sortOrder')
+            sort: document.getElementById('sortBy'), order: document.getElementById('sortOrder'),
+            // CSVインポート用
+            csvIn: document.getElementById('productCsvInput'), impBtn: document.getElementById('importCsvBtn'), impStat: document.getElementById('csvImportStatus')
         };
         let sels = { c1: null, c2: null, c3: null, f: null };
         let lightbox;
 
         function initApp() {
-            loadCat1();
-            setupDropZone();
-            setupSelects();
+            loadCat1(); setupDropZone(); setupSelects();
             els.upBtn.onclick = uploadFiles;
             els.search.oninput = debounce(() => loadImages(sels.f, els.search.value), 500);
             els.sort.onchange = els.order.onchange = () => loadImages(sels.f, els.search.value);
+            els.impBtn.onclick = importCsv;
         }
 
+        // --- CSVインポート機能 ---
+        async function importCsv() {
+            if(els.csvIn.files.length === 0) return alert('CSVファイルを選択してください');
+            const fd = new FormData();
+            fd.append('csvFile', els.csvIn.files[0]);
+            els.impStat.innerText = "登録中...";
+            try {
+                const r = await fetch('/api/products/import', { method: 'POST', body: fd });
+                if(!r.ok) throw new Error('Failed');
+                const d = await r.json();
+                els.impStat.innerText = d.message; els.impStat.style.color = "green";
+                // 既に表示中の画像があれば情報更新のためリロード
+                if(sels.f) loadImages(sels.f, els.search.value);
+            } catch(e) { els.impStat.innerText = "エラーが発生しました"; els.impStat.style.color = "red"; }
+        }
+
+        // --- 以下、既存ロジック ---
         async function loadList(url, containerId, title, onClick) {
             const div = document.getElementById(containerId);
             div.innerHTML = `<h4>${title}</h4><p style="color:#999; font-size:0.8em; padding:5px;">読込中...</p>`;
             try {
-                const r = await fetch(url);
-                if(r.status === 401) return window.location.href = '/login';
-                if(!r.ok) throw new Error('Failed');
+                const r = await fetch(url); if(r.status===401) return window.location.href='/login'; if(!r.ok)throw new Error('F');
                 const data = await r.json();
                 div.innerHTML = `<h4>${title}</h4>`;
-                if(data.length === 0) { div.innerHTML += '<p style="font-size:0.8em; color:#ccc; padding:5px;">なし</p>'; return; }
+                if(data.length===0) { div.innerHTML+='<p style="font-size:0.8em; color:#ccc; padding:5px;">なし</p>'; return; }
                 data.forEach(val => {
-                    const el = document.createElement('div'); el.className = 'gallery-item';
-                    el.innerHTML = `<span>${val}</span>`;
-                    if (containerId === 'folder-container') {
-                        const btns = document.createElement('div'); btns.className = 'action-buttons';
-                        btns.innerHTML = `<button class="delete-btn" title="削除">×</button>`;
-                        btns.querySelector('.delete-btn').onclick = (e) => { e.stopPropagation(); deleteFolder(val); };
+                    const el = document.createElement('div'); el.className='gallery-item'; el.innerHTML=`<span>${val}</span>`;
+                    if (containerId==='folder-container') {
+                        const btns=document.createElement('div'); btns.className='action-buttons';
+                        btns.innerHTML=`<button class="delete-btn" title="削除">×</button>`;
+                        btns.querySelector('.delete-btn').onclick=(e)=>{e.stopPropagation();deleteFolder(val);};
                         el.appendChild(btns);
                     }
-                    el.onclick = () => {
-                        div.querySelectorAll('.gallery-item').forEach(x => x.classList.remove('active'));
-                        el.classList.add('active'); onClick(val);
-                    };
+                    el.onclick=()=>{ div.querySelectorAll('.gallery-item').forEach(x=>x.classList.remove('active')); el.classList.add('active'); onClick(val); };
                     div.appendChild(el);
                 });
-            } catch(e) { div.innerHTML = `<h4>${title}</h4><p style="color:red; padding:5px;">エラー</p>`; }
+            } catch(e) { div.innerHTML=`<h4>${title}</h4><p style="color:red; padding:5px;">エラー</p>`; }
         }
 
         async function loadOpts(url, sel) {
             try {
-                const r = await fetch(url); if(!r.ok) return;
-                const d = await r.json();
-                sel.innerHTML = '<option value="">-- 選択 --</option>';
-                d.forEach(v => sel.innerHTML += `<option value="${v}">${v}</option>`);
-                sel.innerHTML += '<option value="_new_">+ 新規作成</option>';
+                const r=await fetch(url); if(!r.ok)return; const d=await r.json();
+                sel.innerHTML='<option value="">-- 選択 --</option>';
+                d.forEach(v=>sel.innerHTML+=`<option value="${v}">${v}</option>`);
+                sel.innerHTML+='<option value="_new_">+ 新規作成</option>';
             } catch(e){}
         }
 
-        const loadCat1 = () => {
-            resetUI(1);
-            loadList('/api/cat1', 'cat1-container', '大カテゴリ', (v) => { sels.c1=v; els.c1.value=v; checkNew(els.c1, els.c1n); loadCat2(v); });
-            loadOpts('/api/cat1', els.c1);
-        };
-        const loadCat2 = (c1) => {
-            resetUI(2);
-            loadList(`/api/cat2/${c1}`, 'cat2-container', '中カテゴリ', (v) => { sels.c2=v; els.c2.value=v; checkNew(els.c2, els.c2n); loadCat3(c1,v); });
-            loadOpts(`/api/cat2/${c1}`, els.c2);
-        };
-        const loadCat3 = (c1,c2) => {
-            resetUI(3);
-            loadList(`/api/cat3/${c1}/${c2}`, 'cat3-container', '小カテゴリ', (v) => { sels.c3=v; els.c3.value=v; checkNew(els.c3, els.c3n); loadFolder(c1,c2,v); });
-            loadOpts(`/api/cat3/${c1}/${c2}`, els.c3);
-        };
-        const loadFolder = (c1,c2,c3) => {
-            resetUI(4);
-            loadList(`/api/folders/${c1}/${c2}/${c3}`, 'folder-container', 'フォルダ', (v) => { sels.f=v; els.folder.value=v; loadImages(v); });
-        };
+        const loadCat1 = () => { resetUI(1); loadList('/api/cat1','cat1-container','大カテゴリ',v=>{sels.c1=v;els.c1.value=v;checkNew(els.c1,els.c1n);loadCat2(v);}); loadOpts('/api/cat1',els.c1); };
+        const loadCat2 = (c1) => { resetUI(2); loadList(`/api/cat2/${c1}`,'cat2-container','中カテゴリ',v=>{sels.c2=v;els.c2.value=v;checkNew(els.c2,els.c2n);loadCat3(c1,v);}); loadOpts(`/api/cat2/${c1}`,els.c2); };
+        const loadCat3 = (c1,c2) => { resetUI(3); loadList(`/api/cat3/${c1}/${c2}`,'cat3-container','小カテゴリ',v=>{sels.c3=v;els.c3.value=v;checkNew(els.c3,els.c3n);loadFolder(c1,c2,v);}); loadOpts(`/api/cat3/${c1}/${c2}`,els.c3); };
+        const loadFolder = (c1,c2,c3) => { resetUI(4); loadList(`/api/folders/${c1}/${c2}/${c3}`,'folder-container','フォルダ',v=>{sels.f=v;els.folder.value=v;loadImages(v);}); };
 
         async function loadImages(f, q='') {
             if(!f) return;
@@ -244,19 +251,26 @@
                     const name = img.title.split('/').pop();
                     const div = document.createElement('div'); div.className = 'image-item';
                     
-                    // ★修正: PDFか画像かで表示を分ける
+                    // 商品情報表示
+                    let infoHtml = '';
+                    if(img.product_name) {
+                        infoHtml = `
+                            <div class="product-info">
+                                <div class="product-name">${img.product_name}</div>
+                                <div class="product-price">¥${img.price ? img.price.toLocaleString() : '-'}</div>
+                            </div>
+                        `;
+                    }
+
                     if (img.url.toLowerCase().endsWith('.pdf')) {
-                        // PDFの場合: アイコンとリンクを表示 (Lightbox対象外)
-                        div.innerHTML = `<a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.6em; font-weight:normal;">${name}</span></a>`;
+                        div.innerHTML = `<a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.6em; font-weight:normal;">${name}</span></a>${infoHtml}`;
                     } else {
-                        // 画像の場合: 以前と同じ
-                        div.innerHTML = `<a href="${img.url}" class="lightbox-link"><img src="${img.url}" class="gallery-image" alt="${name}" title="${name}"></a>`;
+                        div.innerHTML = `<a href="${img.url}" class="lightbox-link" title="${img.product_name || name}"><img src="${img.url}" class="gallery-image" alt="${name}"></a>${infoHtml}`;
                     }
                     els.gal.appendChild(div);
                 });
                 
                 if(lightbox) lightbox.destroy();
-                // ★修正: Lightboxは画像クラスのみ対象にする
                 lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link', {captionsData:'title'});
                 els.csv.style.visibility = 'visible';
                 els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
@@ -269,30 +283,24 @@
             const c2 = els.c2.value==='_new_' ? els.c2n.value : els.c2.value;
             const c3 = els.c3.value==='_new_' ? els.c3n.value : els.c3.value;
             const f = els.folder.value;
-            if(!c1 || !c2 || !c3 || !f) return alert('カテゴリとフォルダ名は必須です');
-            if(els.file.files.length === 0) return alert('ファイルを選択してください');
-
+            if(!c1||!c2||!c3||!f) return alert('カテゴリとフォルダ名は必須です');
+            if(els.file.files.length===0) return alert('ファイルを選択してください');
             const fd = new FormData();
             fd.append('category1', c1); fd.append('category2', c2); fd.append('category3', c3); fd.append('folderName', f);
             for(let file of els.file.files) fd.append('imageFiles', file);
-
-            els.stat.innerText = "アップロード中..."; els.stat.style.color = "blue";
+            els.stat.innerText="アップロード中..."; els.stat.style.color="blue";
             try {
-                const r = await fetch('/upload', { method: 'POST', body: fd });
-                if(r.status === 401) return window.location.href = '/login';
-                if(!r.ok) throw new Error('Upload failed');
-                els.stat.innerText = "完了しました！"; els.stat.style.color = "green";
-                els.file.value = ''; els.info.innerText = '未選択';
+                const r=await fetch('/upload',{method:'POST',body:fd}); if(r.status===401)return window.location.href='/login';
+                if(!r.ok)throw new Error('Fail');
+                els.stat.innerText="完了しました！"; els.stat.style.color="green";
+                els.file.value=''; els.info.innerText='未選択';
                 if(sels.c1) loadCat1();
-            } catch(e) { els.stat.innerText = "失敗しました"; els.stat.style.color = "red"; }
+            } catch(e) { els.stat.innerText="失敗しました"; els.stat.style.color="red"; }
         }
 
         async function deleteFolder(name) {
             if(!confirm(`フォルダ「${name}」内の画像を全て削除しますか？`)) return;
-            try {
-                const r = await fetch(`/api/folder/${encodeURIComponent(name)}`, { method: 'DELETE' });
-                if(r.ok) { alert('削除しました'); loadFolder(sels.c1, sels.c2, sels.c3); }
-            } catch(e) { alert('削除エラー'); }
+            try { const r=await fetch(`/api/folder/${encodeURIComponent(name)}`,{method:'DELETE'}); if(r.ok){alert('削除しました');loadFolder(sels.c1,sels.c2,sels.c3);} } catch(e){alert('削除エラー');}
         }
 
         function resetUI(level) {
@@ -302,22 +310,17 @@
             if(level<=4) { els.folder.value='default_folder'; els.gal.innerHTML=''; els.searchSec.style.display='none'; els.csv.style.visibility='hidden'; els.csvStat.innerText=''; sels.f=null; }
         }
         function setupDropZone() {
-            els.drop.ondragover = e => { e.preventDefault(); els.drop.classList.add('drag-over'); };
-            els.drop.ondragleave = () => els.drop.classList.remove('drag-over');
-            els.drop.ondrop = e => { e.preventDefault(); els.drop.classList.remove('drag-over'); els.file.files = e.dataTransfer.files; els.info.textContent = `${els.file.files.length} ファイル`; };
-            els.file.onchange = () => els.info.textContent = `${els.file.files.length} ファイル`;
+            els.drop.ondragover=e=>{e.preventDefault();els.drop.classList.add('drag-over');};
+            els.drop.ondragleave=()=>els.drop.classList.remove('drag-over');
+            els.drop.ondrop=e=>{e.preventDefault();els.drop.classList.remove('drag-over');els.file.files=e.dataTransfer.files;els.info.textContent=`${els.file.files.length} ファイル`;};
+            els.file.onchange=()=>els.info.textContent=`${els.file.files.length} ファイル`;
         }
         function setupSelects() {
-            const h = (sel, inp, level) => { 
-                checkNew(sel, inp); 
-                if(sel.value !== '_new_') { if(level===1) loadCat2(sel.value); if(level===2) loadCat3(sels.c1, sel.value); }
-            };
-            els.c1.onchange = () => h(els.c1, els.c1n, 1);
-            els.c2.onchange = () => h(els.c2, els.c2n, 2);
-            els.c3.onchange = () => checkNew(els.c3, els.c3n);
+            const h=(sel,inp,level)=>{ checkNew(sel,inp); if(sel.value!=='_new_'){ if(level===1)loadCat2(sel.value); if(level===2)loadCat3(sels.c1,sel.value); } };
+            els.c1.onchange=()=>h(els.c1,els.c1n,1); els.c2.onchange=()=>h(els.c2,els.c2n,2); els.c3.onchange=()=>checkNew(els.c3,els.c3n);
         }
-        function checkNew(sel, inp) { inp.style.display = sel.value === '_new_' ? 'block' : 'none'; }
-        function debounce(func, wait) { let timeout; return function(...args) { clearTimeout(timeout); timeout = setTimeout(() => func.apply(this, args), wait); }; }
+        function checkNew(sel,inp) { inp.style.display=sel.value==='_new_'?'block':'none'; }
+        function debounce(func,wait){let t;return function(...args){clearTimeout(t);t=setTimeout(()=>func.apply(this,args),wait);};}
     </script>
 </body>
 </html>
