@@ -58,7 +58,7 @@
         .gallery-item:hover { background-color: #f8fafc; }
         .gallery-item.active { background-color: #3b82f6; color: white; }
         
-        /* --- 商品カードスタイル (検索結果) --- */
+        /* --- 商品カードスタイル --- */
         #search-section { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; }
         #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
         
@@ -84,8 +84,8 @@
         
         .p-stats { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 8px; border-top: 1px dashed #e2e8f0; }
         .p-stock { font-weight: bold; }
-        .stock-ok { color: #059669; } /* 在庫あり: 緑 */
-        .stock-ng { color: #dc2626; background: #fee2e2; padding: 0 4px; border-radius: 2px; } /* 在庫なし: 赤 */
+        .stock-ok { color: #059669; } 
+        .stock-ng { color: #dc2626; background: #fee2e2; padding: 0 4px; border-radius: 2px; }
         
         .p-prices { text-align: right; font-size: 0.8rem; color: #475569; }
         .price-val { font-weight: bold; font-size: 1rem; color: #0f172a; }
@@ -99,6 +99,9 @@
         #db-stats span { font-size: 0.9em; color: #666; }
         #db-stats b { font-size: 1.2em; color: #333; }
         #check-mismatch-btn { font-size: 0.8em; padding: 4px 8px; background: #64748b; color: white; border: none; border-radius: 4px; }
+
+        /* Lightboxのキャプション調整 */
+        .sl-caption { font-size: 14px !important; line-height: 1.5 !important; background: rgba(0,0,0,0.8) !important; }
 
         @media (max-width: 768px) {
             #upload-section, #gallery-section { grid-template-columns: 1fr; }
@@ -182,7 +185,6 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js"></script>
     <script>
-        // 初期化処理
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const res = await fetch('/api/auth/check');
@@ -230,7 +232,6 @@
             els.checkBtn.onclick = checkMismatch;
         }
 
-        // --- ステータス・診断 ---
         async function loadStats() {
             try {
                 const d = await (await fetch('/api/products/stats')).json();
@@ -241,25 +242,24 @@
             try {
                 const d = await (await fetch('/api/debug/mismatch')).json();
                 let msg = '【不一致診断】\n';
-                if(d.unlinkedProducts.length) { msg+='\n●CSVにはあるが画像がない(例):\n'+d.unlinkedProducts.map(p=>`・${p.product_name} (画像名: ${p.image_filename})`).join('\n'); }
-                else { msg+='\n●CSVデータは全て紐付いています'; }
+                if(d.unlinkedProducts.length) { msg+='\n●CSVにあるが画像がない(例):\n'+d.unlinkedProducts.map(p=>`・${p.product_name} (画像: ${p.image_filename})`).join('\n'); }
+                else { msg+='\n●CSVデータは紐付いています'; }
                 msg+='\n\n';
                 if(d.recentImages.length) { msg+='\n●画像はあるがCSVがない(例):\n'+d.recentImages.map(i=>`・${i.title.split('/').pop()}`).join('\n'); }
                 alert(msg);
             } catch(e){ alert('Error'); }
         }
 
-        // --- CSV管理 ---
         async function loadCsvList() {
             try {
                 const list = await (await fetch('/api/products/files')).json();
                 els.csvList.innerHTML = list.length ? '' : '<div style="padding:10px; color:#999;">履歴なし</div>';
                 list.forEach(f => {
                     const div = document.createElement('div'); div.className='csv-item';
-                    div.innerHTML = `<span class="csv-name">${f.filename}</span><div class="csv-actions"><button onclick="location.href='/api/products/files/${f.id}/download'" style="background:#17a2b8; color:white; border:none;">DL</button><button onclick="delCsv(${f.id})" style="background:#dc3545; color:white; border:none;">削除</button></div>`;
+                    div.innerHTML = `<span class="csv-name">${f.filename}</span><div class="csv-actions"><button onclick="downloadCsvFile(${f.id})" style="background:#17a2b8; color:white; border:none;">DL</button><button onclick="delCsv(${f.id})" style="background:#dc3545; color:white; border:none;">削除</button></div>`;
                     els.csvList.appendChild(div);
                 });
-            } catch(e){}
+            } catch(e) {}
         }
         async function delCsv(id) { if(confirm('削除しますか？')) { await fetch(`/api/products/files/${id}`,{method:'DELETE'}); loadCsvList(); loadStats(); if(sels.f)loadImages(sels.f,els.search.value); } }
         async function importCsv() {
@@ -273,13 +273,12 @@
                 if(sels.f) loadImages(sels.f, els.search.value);
             } catch(e) { els.impStat.innerText="失敗"; els.impStat.style.color="red"; }
         }
+        function downloadCsvFile(id) { window.location.href = `/api/products/files/${id}/download`; }
 
-        // --- 画像表示 (リッチ表示版) ---
         async function loadImages(f, q='') {
             if(!f && !q) return;
             els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center; color:#666;">読み込み中...</p>';
             const p = new URLSearchParams({ cat1: sels.c1||'', cat2: sels.c2||'', cat3: sels.c3||'', folder: f||'', q: q, sort: els.sort.value, order: els.order.value });
-            
             try {
                 const r = await fetch(`/api/search?${p}`);
                 const d = await r.json();
@@ -289,12 +288,12 @@
                     const div = document.createElement('div'); div.className = 'image-item';
                     const name = img.title.split('/').pop();
                     
-                    // 商品情報の構築
-                    let infoHtml = '';
+                    let infoHtml = '', captionHtml = name;
                     if(img.product_name) {
-                        const stockClass = (img.stock && img.stock > 0) ? 'stock-ok' : 'stock-ng';
                         const stockText = (img.stock && img.stock > 0) ? `在庫: ${img.stock}` : `在庫切れ`;
+                        const stockClass = (img.stock && img.stock > 0) ? 'stock-ok' : 'stock-ng';
                         
+                        // リスト表示用HTML
                         infoHtml = `
                             <div class="product-info">
                                 <div class="p-name" title="${img.product_name}">${img.product_name}</div>
@@ -308,31 +307,46 @@
                                 </div>
                             </div>
                         `;
+                        
+                        // ★修正: Lightbox表示用キャプション（HTMLタグOK）
+                        captionHtml = `
+                            <div style="text-align:center;">
+                                <b style="font-size:1.2em;">${img.product_name}</b><br>
+                                ${img.model_num1 || ''} ${img.model_num2 || ''}<br>
+                                <span style="color:${img.stock>0?'#4ade80':'#ff9999'}; font-weight:bold;">${stockText}</span><br>
+                                EC: ¥${img.ec_price} / メルカリ: ¥${img.mercari_price}
+                            </div>
+                        `;
                     } else {
                         infoHtml = `<div class="product-info" style="color:#999;"><div class="p-name" style="font-weight:normal;">${name}</div><div style="margin-top:10px; font-size:0.8em;">商品情報なし</div></div>`;
                     }
 
-                    // 画像またはPDF
-                    let mediaHtml = '';
                     if (img.url.toLowerCase().endsWith('.pdf')) {
-                        mediaHtml = `<div class="img-wrapper"><a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em; font-weight:normal;">${name}</span></a></div>`;
+                        div.innerHTML = `<a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em; font-weight:normal;">${name}</span></a>${infoHtml}`;
                     } else {
-                        mediaHtml = `<div class="img-wrapper"><a href="${img.url}" class="lightbox-link" title="${img.product_name || name}"><img src="${img.url}" class="gallery-image" alt="${name}"></a></div>`;
+                        // ★修正: data-caption を正しく設定
+                        // HTMLタグを含む文字列を属性に入れるため、エスケープが必要な場合はSimpleLightboxが処理してくれますが
+                        // ここではクォートの競合を防ぐために一工夫（属性値をシングルクォートで囲むか、エスケープする）
+                        // 今回はSimpleLightboxの仕様上、HTMLタグをそのまま渡せます
+                        
+                        // エスケープ処理簡易版
+                        const safeCaption = captionHtml.replace(/"/g, '&quot;');
+                        
+                        div.innerHTML = `<a href="${img.url}" class="lightbox-link" data-caption="${safeCaption}"><img src="${img.url}" class="gallery-image" alt="${name}"></a>${infoHtml}`;
                     }
-
-                    div.innerHTML = mediaHtml + infoHtml;
                     els.gal.appendChild(div);
                 });
                 
                 if(lightbox) lightbox.destroy();
-                lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link');
+                // ★修正: data-caption を使う設定に変更
+                lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link', { captionsData: 'data-caption', captionDelay: 0 });
                 
                 els.csv.style.display = f ? 'inline' : 'none';
                 if(f) els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
             } catch(e) { els.gal.innerHTML = '<p style="color:red;">エラー</p>'; }
         }
 
-        // (以下、基本ロジックは変更なし)
+        // (省略関数は変更なし)
         async function loadList(u,i,t,cb){const d=document.getElementById(i);d.innerHTML=`<h4>${t}</h4><div style="padding:10px; color:#999;">Loading...</div>`;try{const r=await fetch(u);const j=await r.json();d.innerHTML=`<h4>${t}</h4>`;j.forEach(v=>{const e=document.createElement('div');e.className='gallery-item';e.innerText=v;e.onclick=()=>{d.querySelectorAll('.gallery-item').forEach(x=>x.classList.remove('active'));e.classList.add('active');cb(v);};d.appendChild(e);});}catch(e){}}
         async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--</option>';j.forEach(v=>s.innerHTML+=`<option value="${v}">${v}</option>`);s.innerHTML+='<option value="_new_">+新</option>';}catch(e){}}
         const loadCat1=()=>{resetUI(1);loadList('/api/cat1','cat1-container','大',v=>{sels.c1=v;els.c1.value=v;checkNew(els.c1,els.c1n);loadCat2(v);});loadOpts('/api/cat1',els.c1);};
