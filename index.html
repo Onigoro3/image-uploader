@@ -8,7 +8,11 @@
     <style>
         body { font-family: sans-serif; line-height: 1.6; padding: 10px; margin: 0; background-color: #fff; }
         
-        #auth-status { position: fixed; top: 0; left: 0; width: 100%; background: #f8f9fa; padding: 10px; border-bottom: 1px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.1); z-index: 1000; display: flex; justify-content: flex-end; align-items: center; box-sizing: border-box; }
+        #auth-status { 
+            position: fixed; top: 0; left: 0; width: 100%; background: #f8f9fa; padding: 10px; 
+            border-bottom: 1px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.1); z-index: 1000; 
+            display: flex; justify-content: flex-end; align-items: center; box-sizing: border-box;
+        }
         #username-display { margin-right: 10px; font-weight: bold; font-size: 0.9em; }
         #auth-status button { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-left: 5px; }
         #personal-btn { background: #17a2b8 !important; }
@@ -35,6 +39,10 @@
         .csv-name { font-weight: bold; flex: 1; }
         .csv-date { color: #666; font-size: 0.8em; margin-right: 10px; }
         .csv-actions button { margin-left: 5px; font-size: 12px; padding: 3px 8px; }
+
+        /* ステータス表示エリア */
+        #db-stats { margin-top: 10px; font-size: 0.9em; color: #555; background: #fff; padding: 8px; border-radius: 4px; border: 1px solid #ddd; display: flex; justify-content: space-around; }
+        #db-stats span b { color: #333; font-size: 1.1em; }
 
         #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-top: 15px; }
         .image-item { border: 1px solid #ddd; border-radius: 4px; padding: 3px; background: #fff; overflow: hidden; position: relative; }
@@ -94,6 +102,13 @@
                 <button id="importCsvBtn" style="background:#6610f2; color:white; border:none;">登録</button>
             </div>
             <span id="csvImportStatus" style="font-size:0.9em; color:green;"></span>
+            
+            <div id="db-stats">
+                <span>画像: <b>-</b></span>
+                <span>商品データ: <b>-</b></span>
+                <span title="画像ファイル名とCSVの画像名が一致した数">連携成功: <b>-</b></span>
+            </div>
+
             <h4 style="margin:15px 0 5px 0; font-size:0.9em;">登録済みCSV一覧</h4>
             <div id="csv-file-list">読み込み中...</div>
         </div>
@@ -154,17 +169,30 @@
             csv: document.getElementById('csvDownloader'),
             search: document.getElementById('searchInput'), sort: document.getElementById('sortBy'), order: document.getElementById('sortOrder'),
             csvIn: document.getElementById('productCsvInput'), impBtn: document.getElementById('importCsvBtn'), impStat: document.getElementById('csvImportStatus'),
-            csvList: document.getElementById('csv-file-list')
+            csvList: document.getElementById('csv-file-list'),
+            stats: document.getElementById('db-stats')
         };
         let sels = { c1: null, c2: null, c3: null, f: null };
         let lightbox;
 
         function initApp() {
-            loadCat1(); setupDropZone(); setupSelects(); loadCsvList();
+            loadCat1(); setupDropZone(); setupSelects(); loadCsvList(); loadStats();
             els.upBtn.onclick = uploadFiles;
             els.search.oninput = debounce(() => loadImages(sels.f, els.search.value), 500);
             els.sort.onchange = els.order.onchange = () => loadImages(sels.f, els.search.value);
             els.impBtn.onclick = importCsv;
+        }
+
+        async function loadStats() {
+            try {
+                const r = await fetch('/api/products/stats');
+                const d = await r.json();
+                els.stats.innerHTML = `
+                    <span>画像: <b>${d.images}</b></span>
+                    <span>商品データ: <b>${d.products}</b></span>
+                    <span style="color:${d.linked>0?'green':'red'}">連携成功: <b>${d.linked}</b></span>
+                `;
+            } catch(e) {}
         }
 
         async function loadCsvList() {
@@ -197,7 +225,7 @@
                 const r = await fetch('/api/products/import', {method:'POST', body:fd});
                 const d = await r.json();
                 if(!r.ok) throw new Error(d.message || 'Error');
-                els.impStat.innerText = d.message; els.impStat.style.color = "green"; loadCsvList(); 
+                els.impStat.innerText = d.message; els.impStat.style.color = "green"; loadCsvList(); loadStats();
                 if(sels.f) loadImages(sels.f, els.search.value);
             } catch(e){ els.impStat.innerText = `エラー: ${e.message}`; els.impStat.style.color="red"; }
         }
@@ -205,14 +233,11 @@
         function downloadCsvFile(id) { window.location.href = `/api/products/files/${id}/download`; }
         async function deleteCsvFile(id, name) {
             if(!confirm(`「${name}」を削除しますか？`)) return;
-            try { await fetch(`/api/products/files/${id}`, {method:'DELETE'}); loadCsvList(); if(sels.f) loadImages(sels.f, els.search.value); } catch(e){ alert('エラー'); }
+            try { await fetch(`/api/products/files/${id}`, {method:'DELETE'}); loadCsvList(); loadStats(); if(sels.f) loadImages(sels.f, els.search.value); } catch(e){ alert('エラー'); }
         }
 
-        // ★修正: フォルダ未選択でも検索可能にする
         async function loadImages(f, q='') {
-            // 検索ワードもなくフォルダも選択されていない場合は戻る
             if(!f && !q) return;
-            
             els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center;">読込中...</p>';
             const params = new URLSearchParams({
                 cat1: sels.c1 || '', cat2: sels.c2 || '', cat3: sels.c3 || '',
@@ -234,7 +259,7 @@
                         info = `<div class="product-info"><div class="p-name">${img.product_name}</div><div class="p-detail"><span>${img.model_num1 || ''} ${img.model_num2 || ''}</span><span class="p-price">¥${img.ec_price ? img.ec_price.toLocaleString() : '-'}</span></div><div style="font-size:0.8em; color:#666;">在庫: ${img.stock} | 状態: ${img.condition}</div></div>`;
                     }
                     if (img.url.toLowerCase().endsWith('.pdf')) {
-                        div.innerHTML = `<a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br>${name}</a>${info}`;
+                        div.innerHTML = `<a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.6em; font-weight:normal;">${name}</span></a>${info}`;
                     } else {
                         div.innerHTML = `<a href="${img.url}" class="lightbox-link" title="${img.product_name || name}"><img src="${img.url}" class="gallery-image" alt="${name}"></a>${info}`;
                     }
@@ -242,7 +267,7 @@
                 });
                 if(lightbox) lightbox.destroy();
                 lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link');
-                els.csv.style.visibility = f ? 'visible' : 'hidden'; // フォルダ選択時のみCSVボタン表示
+                els.csv.style.visibility = f ? 'visible' : 'hidden';
                 if(f) els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
             } catch(e) { els.gal.innerHTML = `<p style="color:red;">${e.message}</p>`; }
         }
@@ -258,7 +283,7 @@
         function setupDropZone(){els.drop.ondragover=e=>{e.preventDefault();els.drop.classList.add('drag-over');};els.drop.ondragleave=()=>els.drop.classList.remove('drag-over');els.drop.ondrop=e=>{e.preventDefault();els.drop.classList.remove('drag-over');els.file.files=e.dataTransfer.files;els.info.innerText=els.file.files.length+' Files';};els.file.onchange=()=>els.info.innerText=els.file.files.length+' Files';}
         function setupSelects(){const h=(s,i,l)=>{checkNew(s,i);if(s.value!=='_new_'){if(l===1)loadCat2(s.value);if(l===2)loadCat3(sels.c1,s.value);}};els.c1.onchange=()=>h(els.c1,els.c1n,1);els.c2.onchange=()=>h(els.c2,els.c2n,2);els.c3.onchange=()=>checkNew(els.c3,els.c3n);}
         function checkNew(s,i){i.style.display=s.value==='_new_'?'block':'none';}
-        async function uploadFiles(){const fd=new FormData();fd.append('category1',els.c1.value==='_new_'?els.c1n.value:els.c1.value);fd.append('category2',els.c2.value==='_new_'?els.c2n.value:els.c2.value);fd.append('category3',els.c3.value==='_new_'?els.c3n.value:els.c3.value);fd.append('folderName',els.folder.value);for(let f of els.file.files)fd.append('imageFiles',f);els.stat.innerText='UP...';try{const r=await fetch('/upload',{method:'POST',body:fd});if(!r.ok)throw 1;els.stat.innerText='OK';els.file.value='';loadCat1();}catch(e){els.stat.innerText='Err';}}
+        async function uploadFiles(){const fd=new FormData();fd.append('category1',els.c1.value==='_new_'?els.c1n.value:els.c1.value);fd.append('category2',els.c2.value==='_new_'?els.c2n.value:els.c2.value);fd.append('category3',els.c3.value==='_new_'?els.c3n.value:els.c3.value);fd.append('folderName',els.folder.value);for(let f of els.file.files)fd.append('imageFiles',f);els.stat.innerText='UP...';try{const r=await fetch('/upload',{method:'POST',body:fd});if(!r.ok)throw 1;els.stat.innerText='OK';els.file.value='';loadCat1();loadStats();}catch(e){els.stat.innerText='Err';}}
         function debounce(f,w){let t;return function(...a){clearTimeout(t);t=setTimeout(()=>f.apply(this,a),w);};}
     </script>
 </body>
