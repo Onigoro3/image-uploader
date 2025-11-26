@@ -77,16 +77,14 @@
             font-weight: bold; text-decoration: none; 
         }
 
-        /* 商品情報詳細 */
+        /* 商品情報詳細 (カード下部) */
         .product-info { padding: 10px; font-size: 0.85rem; border-top: 1px solid #e2e8f0; flex-grow: 1; display: flex; flex-direction: column; gap: 4px; }
         .p-name { font-weight: bold; color: #1e293b; line-height: 1.4; margin-bottom: 4px; }
         .p-model { color: #64748b; font-size: 0.8rem; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; align-self: flex-start; }
-        
         .p-stats { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 8px; border-top: 1px dashed #e2e8f0; }
         .p-stock { font-weight: bold; }
         .stock-ok { color: #059669; } 
         .stock-ng { color: #dc2626; background: #fee2e2; padding: 0 4px; border-radius: 2px; }
-        
         .p-prices { text-align: right; font-size: 0.8rem; color: #475569; }
         .price-val { font-weight: bold; font-size: 1rem; color: #0f172a; }
 
@@ -100,18 +98,19 @@
         #db-stats b { font-size: 1.2em; color: #333; }
         #check-mismatch-btn { font-size: 0.8em; padding: 4px 8px; background: #64748b; color: white; border: none; border-radius: 4px; }
 
-        /* ★修正: Lightboxのキャプションデザイン調整 */
-        .sl-overlay { background: rgba(0,0,0,0.85) !important; }
-        .sl-caption { 
-            font-size: 14px !important; 
-            line-height: 1.6 !important; 
-            background: rgba(0,0,0,0.6) !important; 
-            color: #fff !important;
-            padding: 15px !important;
-            bottom: 0 !important;
-            position: fixed !important;
-            width: 100% !important;
-            text-align: center !important;
+        /* --- ★修正: Lightboxキャプションの調整 --- */
+        /* 背景を少し濃くし、文字を見やすくする */
+        .sl-wrapper .sl-caption {
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            font-size: 14px;
+            line-height: 1.5;
+            padding: 15px;
+            bottom: 0;
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            z-index: 10060; /* 画像より手前に */
         }
 
         @media (max-width: 768px) {
@@ -196,6 +195,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js"></script>
     <script>
+        // 初期化処理
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const res = await fetch('/api/auth/check');
@@ -288,7 +288,7 @@
 
         async function loadImages(f, q='') {
             if(!f && !q) return;
-            els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center;">読込中...</p>';
+            els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center; color:#666;">読み込み中...</p>';
             const p = new URLSearchParams({ cat1: sels.c1||'', cat2: sels.c2||'', cat3: sels.c3||'', folder: f||'', q: q, sort: els.sort.value, order: els.order.value });
             try {
                 const r = await fetch(`/api/search?${p}`);
@@ -299,67 +299,47 @@
                     const div = document.createElement('div'); div.className = 'image-item';
                     const name = img.title.split('/').pop();
                     
+                    // キャプション用HTML (改行を削除して1行にするのがコツ)
                     let infoHtml = '', captionHtml = '';
+                    
                     if(img.product_name) {
                         const stockText = (img.stock && img.stock > 0) ? `在庫: ${img.stock}` : `在庫切れ`;
                         const stockClass = (img.stock && img.stock > 0) ? 'stock-ok' : 'stock-ng';
                         
-                        // リスト表示用 (カード下の情報)
-                        infoHtml = `
-                            <div class="product-info">
-                                <div class="p-name" title="${img.product_name}">${img.product_name}</div>
-                                <div class="p-model">${img.model_num1 || '-'} ${img.model_num2 || ''}</div>
-                                <div class="p-stats">
-                                    <span class="p-stock ${stockClass}">${stockText}</span>
-                                    <div class="p-prices">
-                                        <div>EC: <span class="price-val">¥${img.ec_price ? img.ec_price.toLocaleString() : '-'}</span></div>
-                                        <div>メルカリ: ¥${img.mercari_price ? img.mercari_price.toLocaleString() : '-'}</div>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
+                        infoHtml = `<div class="product-info"><div class="p-name" title="${img.product_name}">${img.product_name}</div><div class="p-model">${img.model_num1 || '-'} ${img.model_num2 || ''}</div><div class="p-stats"><span class="p-stock ${stockClass}">${stockText}</span><div class="p-prices"><div>EC: <span class="price-val">¥${img.ec_price ? img.ec_price.toLocaleString() : '-'}</span></div><div>メルカリ: ¥${img.mercari_price ? img.mercari_price.toLocaleString() : '-'}</div></div></div></div>`;
                         
-                        // Lightbox表示用 (拡大時の黒帯) - 引用符を安全に処理
-                        const safeName = (img.product_name || '').replace(/"/g, '&quot;');
-                        captionHtml = `
-                            <div style="text-align:center; font-weight:bold;">${safeName}</div>
-                            <div style="font-size:0.9em;">${img.model_num1||''} ${img.model_num2||''}</div>
-                            <div style="margin-top:5px; color:${img.stock>0?'#4ade80':'#f87171'}; font-weight:bold;">${stockText}</div>
-                            <div style="font-size:0.9em;">EC: ¥${img.ec_price} / メルカリ: ¥${img.mercari_price}</div>
-                        `;
+                        // ★修正: キャプション用のHTMLを1行にまとめる
+                        captionHtml = `<div style='text-align:center;'><b style='font-size:1.2em;color:#fff;'>${img.product_name}</b><br><span style='font-size:0.9em;color:#ccc;'>${img.model_num1||''}</span><br><span style='color:${img.stock>0?'#4ade80':'#f87171'};font-weight:bold;'>${stockText}</span><br>EC: ¥${img.ec_price} / メル: ¥${img.mercari_price}</div>`;
                     } else {
                         infoHtml = `<div class="product-info" style="color:#999;"><div class="p-name" style="font-weight:normal;">${name}</div><div style="margin-top:10px; font-size:0.8em;">商品情報なし</div></div>`;
-                        captionHtml = `${name} (商品情報未登録)`;
+                        captionHtml = `${name}`;
                     }
 
-                    // 画像またはPDF
-                    let mediaHtml = '';
-                    // ★重要: data-caption属性にセット（エスケープはライブラリに任せるが、属性値としてのクォート破壊を防ぐためエンコード推奨だが、今回はシングルクォートで囲むことで簡易対応）
-                    // より安全にするため、captionHtml内の二重引用符をエスケープ
-                    const safeCaptionAttr = captionHtml.replace(/"/g, '&quot;');
+                    // クォートのエスケープ処理
+                    const safeCaption = captionHtml.replace(/"/g, '&quot;');
 
                     if (img.url.toLowerCase().endsWith('.pdf')) {
                         div.innerHTML = `<a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em; font-weight:normal;">${name}</span></a>${infoHtml}`;
                     } else {
-                        div.innerHTML = `<a href="${img.url}" class="lightbox-link" data-caption="${safeCaptionAttr}"><img src="${img.url}" class="gallery-image" alt="${name}"></a>${infoHtml}`;
+                        // data-caption に安全なHTML文字列をセット
+                        div.innerHTML = `<a href="${img.url}" class="lightbox-link" data-caption="${safeCaption}"><img src="${img.url}" class="gallery-image" alt="${name}"></a>${infoHtml}`;
                     }
                     els.gal.appendChild(div);
                 });
                 
                 if(lightbox) lightbox.destroy();
-                // ★修正: captionDelayを0にして即表示、captionsDataで属性指定
                 lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link', { 
-                    captionsData: 'data-caption', 
+                    captionsData: 'data-caption', // data-caption属性の中身を表示
                     captionDelay: 0,
                     captionPosition: 'bottom'
                 });
                 
                 els.csv.style.display = f ? 'inline' : 'none';
                 if(f) els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
-            } catch(e) { els.gal.innerHTML = `<p style="color:red;">${e.message}</p>`; }
+            } catch(e) { els.gal.innerHTML = '<p style="color:red;">エラー</p>'; }
         }
 
-        // (省略関数は変更なし)
+        // (以下変更なし)
         async function loadList(u,i,t,cb){const d=document.getElementById(i);d.innerHTML=`<h4>${t}</h4><div style="padding:10px; color:#999;">Loading...</div>`;try{const r=await fetch(u);const j=await r.json();d.innerHTML=`<h4>${t}</h4>`;j.forEach(v=>{const e=document.createElement('div');e.className='gallery-item';e.innerText=v;e.onclick=()=>{d.querySelectorAll('.gallery-item').forEach(x=>x.classList.remove('active'));e.classList.add('active');cb(v);};d.appendChild(e);});}catch(e){}}
         async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--</option>';j.forEach(v=>s.innerHTML+=`<option value="${v}">${v}</option>`);s.innerHTML+='<option value="_new_">+新</option>';}catch(e){}}
         const loadCat1=()=>{resetUI(1);loadList('/api/cat1','cat1-container','大',v=>{sels.c1=v;els.c1.value=v;checkNew(els.c1,els.c1n);loadCat2(v);});loadOpts('/api/cat1',els.c1);};
