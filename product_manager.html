@@ -4,9 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>商品管理 - 画像アップローダー</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" />
     <style>
-        /* --- 全体設定 --- */
+        /* --- 全体設定 (index.htmlと統一) --- */
         body { font-family: "Helvetica Neue", Arial, sans-serif; line-height: 1.6; padding: 10px; margin: 0; background-color: #f0fdf4; color: #333; }
         
         /* ヘッダー */
@@ -16,10 +15,8 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
         #nav-bar span { font-weight: bold; color: #166534; font-size: 1.1em; }
-        
-        .nav-btn { color: #15803d; text-decoration: none; font-weight: bold; border: 1px solid #15803d; padding: 5px 10px; border-radius: 4px; margin-left: 5px; font-size: 0.9em; cursor: pointer; background: white; }
-        .nav-btn:hover { background: #f0fdf4; }
-        #fix-db-btn { background: #ffc107; color: #333; border-color: #eab308; }
+        a { color: #15803d; text-decoration: none; font-weight: bold; border: 1px solid #15803d; padding: 5px 10px; border-radius: 4px; }
+        a:hover { background: #f0fdf4; }
 
         .panel { 
             background: #fff; padding: 20px; border-radius: 8px; 
@@ -33,8 +30,8 @@
             display: flex; justify-content: space-between; align-items: center;
         }
         
-        /* --- フォルダ選択カラム --- */
-        #gallery-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
+        /* --- 3カラムカテゴリ選択 (修正: フォルダなし) --- */
+        #gallery-section { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
         .gallery-column { border: 1px solid #e2e8f0; padding: 0; border-radius: 6px; background: #f8fafc; height: 250px; overflow-y: auto; }
         .gallery-column h4 { 
             margin: 0; padding: 8px; background: #e2e8f0; border-bottom: 1px solid #cbd5e1; 
@@ -76,17 +73,14 @@
         .csv-actions button { margin-left: 5px; padding: 4px 10px; font-size: 12px; color: white; border-radius: 3px; }
 
         @media (max-width: 768px) {
-            #gallery-section { grid-template-columns: 1fr 1fr; }
+            #gallery-section { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
     <div id="nav-bar">
         <span>📄 商品情報管理</span>
-        <div>
-            <button id="fix-db-btn" class="nav-btn">⚠️DB修復</button>
-            <a href="/" class="nav-btn">画像一覧へ</a>
-        </div>
+        <a href="/">画像一覧へ戻る</a>
     </div>
 
     <div class="panel">
@@ -94,19 +88,17 @@
             <span>📂 カテゴリ選択 (登録先・絞り込み)</span>
         </h3>
         <p style="font-size:0.9em; color:#666; margin-bottom:10px;">
-            選択したフォルダに対してCSVを登録します。また、下のリストがそのフォルダのCSVに絞り込まれます。
+            選択したカテゴリに対してCSVを登録します。また、下のリストがそのカテゴリのCSVに絞り込まれます。
         </p>
         <div id="gallery-section">
             <div id="cat1-container" class="gallery-column"><h4>大カテゴリ</h4></div>
             <div id="cat2-container" class="gallery-column"><h4>中カテゴリ</h4></div>
             <div id="cat3-container" class="gallery-column"><h4>小カテゴリ</h4></div>
-            <div id="folder-container" class="gallery-column"><h4>フォルダ</h4></div>
         </div>
-        <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px;">
+        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
             <input type="text" id="cat1NewInput" class="new-input" placeholder="新規 大カテゴリ">
             <input type="text" id="cat2NewInput" class="new-input" placeholder="新規 中カテゴリ">
             <input type="text" id="cat3NewInput" class="new-input" placeholder="新規 小カテゴリ">
-            <input type="text" id="folderNewInput" class="new-input" placeholder="新規 フォルダ">
         </div>
     </div>
 
@@ -121,7 +113,7 @@
                 登録先: <span style="color:#999;">(カテゴリを選択してください)</span>
             </div>
             <input type="file" id="productCsvInput" accept=".csv">
-            <button id="importCsvBtn">このフォルダにCSVを登録</button>
+            <button id="importCsvBtn">このカテゴリにCSVを登録</button>
         </div>
         <p id="csvImportStatus" style="font-weight: bold; color: green; text-align:center;"></p>
     </div>
@@ -147,17 +139,6 @@
         // 認証チェック
         fetch('/api/auth/check').then(r=>r.json()).then(d=>{if(!d.loggedIn)location.href='/login'});
 
-        // DB修復ボタン
-        document.getElementById('fix-db-btn').addEventListener('click', async () => {
-            if(!confirm('データベース構成を更新しますか？\n(エラーが出ている場合に有効です)')) return;
-            try { 
-                const r = await fetch('/api/admin/init-db', { method: 'POST' }); 
-                const d = await r.json(); 
-                alert(d.message); 
-                location.reload(); 
-            } catch(e) { alert('エラーが発生しました'); }
-        });
-
         const els = {
             stImg: document.getElementById('stat-img'), stProd: document.getElementById('stat-prod'), stLink: document.getElementById('stat-link'),
             checkBtn: document.getElementById('check-mismatch-btn'),
@@ -165,19 +146,16 @@
             impStat: document.getElementById('csvImportStatus'), csvList: document.getElementById('csv-file-list'),
             dlTmp: document.getElementById('dlTemplateBtn'),
             pathDisp: document.getElementById('selected-path-display'),
-            // カテゴリ入力
-            c1n: document.getElementById('cat1NewInput'), c2n: document.getElementById('cat2NewInput'),
-            c3n: document.getElementById('cat3NewInput'), fn: document.getElementById('folderNewInput')
+            c1n: document.getElementById('cat1NewInput'), c2n: document.getElementById('cat2NewInput'), c3n: document.getElementById('cat3NewInput')
         };
 
-        // 選択状態
-        let sels = { c1: null, c2: null, c3: null, f: null };
-        let csvData = []; // 全CSVデータキャッシュ
+        let sels = { c1: null, c2: null, c3: null };
+        let csvData = []; 
 
         document.addEventListener('DOMContentLoaded', () => {
-            loadCat1(); // カテゴリツリー読み込み
+            loadCat1(); 
             loadStats();
-            loadCsvList(); // CSV一覧読み込み
+            loadCsvList(); 
         });
 
         els.dlTmp.onclick = () => location.href = '/api/products/template';
@@ -216,22 +194,21 @@
 
         const loadCat1 = () => { resetUI(1); loadList('/api/cat1', 'cat1-container', '大カテゴリ', (v) => { sels.c1 = v; handleSelect(1, v); if(v !== '_new_') loadCat2(v); }); };
         const loadCat2 = (c1) => { resetUI(2); loadList(`/api/cat2/${c1}`, 'cat2-container', '中カテゴリ', (v) => { sels.c2 = v; handleSelect(2, v); if(v !== '_new_') loadCat3(c1, v); }); };
-        const loadCat3 = (c1, c2) => { resetUI(3); loadList(`/api/cat3/${c1}/${c2}`, 'cat3-container', '小カテゴリ', (v) => { sels.c3 = v; handleSelect(3, v); if(v !== '_new_') loadFolder(c1, c2, v); }); };
-        const loadFolder = (c1, c2, c3) => { resetUI(4); loadList(`/api/folders/${c1}/${c2}/${c3}`, 'folder-container', 'フォルダ', (v) => { sels.f = v; handleSelect(4, v); }); };
+        const loadCat3 = (c1, c2) => { resetUI(3); loadList(`/api/cat3/${c1}/${c2}`, 'cat3-container', '小カテゴリ', (v) => { sels.c3 = v; handleSelect(3, v); }); };
 
         function resetUI(level) {
             if(level<=1) { document.getElementById('cat2-container').innerHTML='<h4>中カテゴリ</h4>'; sels.c1=null; }
             if(level<=2) { document.getElementById('cat3-container').innerHTML='<h4>小カテゴリ</h4>'; sels.c2=null; }
-            if(level<=3) { document.getElementById('folder-container').innerHTML='<h4>フォルダ</h4>'; sels.c3=null; }
-            if(level<=4) { sels.f=null; }
+            if(level<=3) { sels.c3=null; }
             updatePathDisplay();
             renderCsvList(); // 選択解除時は全件表示
-            const inputs = [els.c1n, els.c2n, els.c3n, els.fn];
-            for(let i = level-1; i < 4; i++) inputs[i].style.display = 'none';
+            
+            const inputs = [els.c1n, els.c2n, els.c3n];
+            for(let i = level-1; i < 3; i++) inputs[i].style.display = 'none';
         }
 
         function handleSelect(level, value) {
-            const inputs = [els.c1n, els.c2n, els.c3n, els.fn];
+            const inputs = [els.c1n, els.c2n, els.c3n];
             if (value === '_new_') { inputs[level-1].style.display = 'block'; inputs[level-1].focus(); } 
             else { inputs[level-1].style.display = 'none'; }
             updatePathDisplay();
@@ -247,7 +224,7 @@
         
         [els.c1n, els.c2n, els.c3n].forEach(el => el.oninput = updatePathDisplay);
 
-        // --- CSV管理 ---
+        // --- CSV管理機能 ---
         async function loadStats() { try { const d = await (await fetch('/api/products/stats')).json(); els.stImg.innerText = d.images; els.stProd.innerText = d.products; els.stLink.innerText = d.linked; } catch(e) {} }
         async function loadCsvList() { try { const list = await (await fetch('/api/products/files')).json(); csvData = list; renderCsvList(); } catch(e) { els.csvList.innerText = '読み込みエラー'; } }
 
@@ -257,8 +234,7 @@
             const targetC3 = (sels.c3 && sels.c3 !== '_new_') ? sels.c3 : null;
 
             const filtered = csvData.filter(f => {
-                // 選択中のフォルダに一致するもの + 「未分類」は常に表示する
-                if (f.category_1 === '未分類') return true;
+                if (f.category_1 === '未分類') return true; // 未分類は常に見せる
                 if (targetC1 && f.category_1 !== targetC1) return false;
                 if (targetC2 && f.category_2 !== targetC2) return false;
                 if (targetC3 && f.category_3 !== targetC3) return false;
@@ -271,34 +247,54 @@
             filtered.forEach(f => {
                 const date = new Date(f.uploaded_at).toLocaleString('ja-JP');
                 const catLabel = [f.category_1, f.category_2, f.category_3].filter(c=>c && c!=='未分類' && c!=='-').join(' > ') || '未分類';
+                
                 const div = document.createElement('div'); div.className = 'csv-item';
                 div.innerHTML = `
-                    <div class="csv-header"><span>${f.filename}</span><div class="csv-actions"><button onclick="editCsv(${f.id}, '${f.filename}', '${f.category_1}', '${f.category_2}', '${f.category_3}')" style="background:#ffc107; color:#000; border:none;">編集</button><button onclick="window.location.href='/api/products/files/${f.id}/download'" style="background:#17a2b8; color:white; border:none;">DL</button><button onclick="delCsv(${f.id})" style="background:#dc3545; color:white; border:none;">削除</button></div></div>
-                    <div class="csv-meta"><span class="csv-tag">📂 ${catLabel}</span><span>📅 ${date}</span></div>`;
+                    <div class="csv-header">
+                        <span>${f.filename}</span>
+                        <div class="csv-actions">
+                            <button onclick="editCsv(${f.id}, '${f.filename}', '${f.category_1}', '${f.category_2}', '${f.category_3}')" style="background:#ffc107; color:#000; border:none;">編集</button>
+                            <button onclick="window.location.href='/api/products/files/${f.id}/download'" style="background:#17a2b8; color:white; border:none;">DL</button>
+                            <button onclick="delCsv(${f.id})" style="background:#dc3545; color:white; border:none;">削除</button>
+                        </div>
+                    </div>
+                    <div class="csv-meta">
+                        <span class="csv-tag">📂 ${catLabel}</span>
+                        <span>📅 ${date}</span>
+                    </div>
+                `;
                 els.csvList.appendChild(div);
             });
         }
 
         async function importCsv() {
             if(!els.csvIn.files.length) return alert('CSVファイルを選択してください');
+            
             const c1 = sels.c1 === '_new_' ? els.c1n.value : (sels.c1 || '未分類');
             const c2 = sels.c2 === '_new_' ? els.c2n.value : (sels.c2 || '-');
             const c3 = sels.c3 === '_new_' ? els.c3n.value : (sels.c3 || '-');
 
             const fd = new FormData(); 
-            fd.append('csvFile', els.csvIn.files[0]); fd.append('category1', c1); fd.append('category2', c2); fd.append('category3', c3);
+            fd.append('csvFile', els.csvIn.files[0]);
+            fd.append('category1', c1); fd.append('category2', c2); fd.append('category3', c3);
+
             els.impStat.innerText = "登録中...";
             try {
                 const r = await fetch('/api/products/import', {method:'POST', body:fd});
                 const d = await r.json();
                 if(!r.ok) throw new Error(d.message);
-                els.impStat.innerText = d.message; els.csvIn.value = '';
+                els.impStat.innerText = d.message;
+                els.csvIn.value = '';
                 loadCsvList(); loadStats();
                 if (sels.c1 === '_new_') setTimeout(loadCat1, 1000);
             } catch(e) { els.impStat.innerText = "エラー: " + e.message; els.impStat.style.color="red"; }
         }
 
-        async function delCsv(id) { if(!confirm('削除しますか？')) return; await fetch(`/api/products/files/${id}`, {method:'DELETE'}); loadCsvList(); loadStats(); }
+        async function delCsv(id) {
+            if(!confirm('削除しますか？\n(このCSVから登録された商品情報も消えます)')) return;
+            await fetch(`/api/products/files/${id}`, {method:'DELETE'});
+            loadCsvList(); loadStats();
+        }
         
         async function checkMismatch() {
             try {
@@ -313,10 +309,12 @@
 
         async function editCsv(id, oldName, oldC1, oldC2, oldC3) {
             const newName = prompt("ファイル名を変更:", oldName);
-            if(newName) {
+            if(newName === null) return;
+             if(newName) {
                 try {
                     await fetch(`/api/products/files/${id}`, {
-                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ filename: newName, category1: oldC1, category2: oldC2, category3: oldC3 })
                     });
                     loadCsvList();
