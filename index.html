@@ -37,6 +37,7 @@
         h3 { 
             color: #166534; border-bottom: 2px solid #bbf7d0; 
             padding-bottom: 10px; margin-top: 0; margin-bottom: 20px; font-size: 1.1rem;
+            display: flex; justify-content: space-between; align-items: center;
         }
 
         /* フォーム要素 */
@@ -60,22 +61,38 @@
             font-size: 1rem; transition: background 0.2s;
         }
 
+        /* カテゴリ作成エリア（Gallery内） */
+        .cat-creation-area {
+            background: #f0f9ff; border: 1px solid #bae6fd; padding: 10px; border-radius: 6px; margin-bottom: 15px;
+            display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+        }
+        .cat-creation-area .input-group { display: flex; flex-direction: column; flex: 1; min-width: 120px; }
+        .cat-creation-area label { font-size: 0.8em; font-weight: bold; color: #0284c7; margin-bottom: 2px; }
+        .cat-creation-area input { margin-bottom: 0; padding: 6px; font-size: 0.9em; }
+        .cat-creation-area button { padding: 8px 15px; background: #0ea5e9; color: white; font-size: 0.9em; height: 36px; }
+
         /* ギャラリー選択 (4カラム) */
         #gallery-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
         .gallery-column { border: 1px solid #e2e8f0; padding: 0; border-radius: 6px; background: #f8fafc; height: 250px; overflow-y: auto; }
         .gallery-column h4 { 
             margin: 0; padding: 8px; background: #e2e8f0; border-bottom: 1px solid #cbd5e1; 
-            font-size: 0.85em; text-align: center; color: #475569; position: sticky; top: 0; 
+            font-size: 0.85em; text-align: center; color: #475569; position: sticky; top: 0; z-index: 10;
         }
+        
+        /* ギャラリーアイテム（編集ボタン付き） */
         .gallery-item { 
-            padding: 8px 12px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 14px; 
+            padding: 8px 10px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 14px; 
             transition: background 0.1s; background: #fff; display: flex; justify-content: space-between; align-items: center;
         }
         .gallery-item:hover { background-color: #f0fdf4; }
         .gallery-item.active { background-color: #15803d; color: white; }
+        .gallery-item.active .edit-btn { color: #fff; } /* 選択中は白く */
+
+        .edit-btn { background: none; border: none; cursor: pointer; color: #cbd5e1; font-size: 1.1em; padding: 0 5px; line-height: 1; }
+        .edit-btn:hover { color: #f59e0b; }
         
         /* 削除ボタン */
-        .action-buttons button { background: #dc3545; color: white; border: none; border-radius: 3px; width: 20px; height: 20px; line-height: 20px; font-size: 12px; padding: 0; cursor: pointer; }
+        .action-buttons button { background: #dc3545; color: white; border: none; border-radius: 3px; width: 20px; height: 20px; line-height: 20px; font-size: 12px; padding: 0; cursor: pointer; margin-left:5px; }
 
         /* 検索・一覧 */
         #search-section { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
@@ -94,7 +111,6 @@
         .product-info { padding: 10px; font-size: 0.85rem; border-top: 1px solid #f0f0f0; background: #fff; flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; }
         .p-name { font-weight: bold; color: #1e293b; line-height: 1.4; margin-bottom: 5px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         
-        /* ★修正: 型番表示を見やすくするためのスタイル */
         .p-model-container { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
         .model-badge { 
             background: #f1f5f9; border: 1px solid #cbd5e1; color: #475569; 
@@ -148,18 +164,37 @@
         </div>
 
         <div class="panel">
-            <h3>🖼️ ギャラリー・検索 <a href="#" id="csvDownloader" style="display:none;">[現在の一覧をCSV保存]</a></h3>
+            <h3>🖼️ ギャラリー・検索・カテゴリ管理 <a href="#" id="csvDownloader" style="display:none;">[現在の一覧をCSV保存]</a></h3>
+            
+            <div class="cat-creation-area">
+                <div class="input-group">
+                    <label>大カテゴリ (必須)</label>
+                    <input type="text" id="newC1" placeholder="例: ポケカ">
+                </div>
+                <div class="input-group">
+                    <label>中カテゴリ</label>
+                    <input type="text" id="newC2" placeholder="例: BOX">
+                </div>
+                <div class="input-group">
+                    <label>小カテゴリ</label>
+                    <input type="text" id="newC3" placeholder="例: 151">
+                </div>
+                <button id="createCatBtn">空カテゴリ作成</button>
+            </div>
+
             <div id="search-section">
                 <input type="search" id="searchInput" placeholder="商品名、型番、ファイル名で検索..." style="flex-grow:1; margin-bottom:0;">
                 <select id="sortBy" style="width:auto; margin-bottom:0;"><option value="created_at">登録日順</option><option value="title">名前順</option></select>
                 <select id="sortOrder" style="width:auto; margin-bottom:0;"><option value="DESC">新しい順</option><option value="ASC">古い順</option></select>
             </div>
+
             <div id="gallery-section">
                 <div id="cat1-container" class="gallery-column"><h4>大カテゴリ</h4></div>
                 <div id="cat2-container" class="gallery-column"><h4>中カテゴリ</h4></div>
                 <div id="cat3-container" class="gallery-column"><h4>小カテゴリ</h4></div>
                 <div id="folder-container" class="gallery-column"><h4>フォルダ</h4></div>
             </div>
+            
             <hr>
             <div id="image-gallery-container"></div>
         </div>
@@ -183,9 +218,16 @@
 
         const els = {
             file: document.getElementById('imageInput'),
+            // Upload Selects
             c1: document.getElementById('cat1Select'), c1n: document.getElementById('cat1NewInput'),
             c2: document.getElementById('cat2Select'), c2n: document.getElementById('cat2NewInput'),
             c3: document.getElementById('cat3Select'), c3n: document.getElementById('cat3NewInput'),
+            // New Category Inputs
+            newC1: document.getElementById('newC1'), newC2: document.getElementById('newC2'), newC3: document.getElementById('newC3'),
+            createBtn: document.getElementById('createCatBtn'),
+            // Gallery Containers
+            c1Box: document.getElementById('cat1-container'), c2Box: document.getElementById('cat2-container'), c3Box: document.getElementById('cat3-container'), fBox: document.getElementById('folder-container'),
+            
             folder: document.getElementById('folderInput'),
             upBtn: document.getElementById('uploadButton'), stat: document.getElementById('uploadStatus'),
             drop: document.getElementById('dropZone'), info: document.getElementById('fileInfo'),
@@ -196,35 +238,163 @@
         let lightbox;
 
         function initApp() {
-            loadCat1(); setupDropZone(); setupSelects();
+            // Load initial lists (Use type=all to see empty categories too)
+            loadCat1(); 
+            setupDropZone(); 
+            setupSelects();
+            
             els.upBtn.onclick = uploadFiles;
             els.search.oninput = debounce(() => loadImages(sels.f, els.search.value), 500);
             els.sort.onchange = els.order.onchange = () => loadImages(sels.f, els.search.value);
+
+            // New: Category Creation
+            els.createBtn.onclick = createCategoryOnly;
         }
 
-        const loadCat1 = () => { resetUI(1); loadList('/api/cat1?type=image', 'cat1-container', '大カテゴリ', (v) => { sels.c1=v; els.c1.value=v; checkNew(els.c1, els.c1n); loadCat2(v); }); loadOpts('/api/cat1?type=image', els.c1); };
-        const loadCat2 = (c1) => { resetUI(2); loadList(`/api/cat2/${c1}?type=image`, 'cat2-container', '中カテゴリ', (v) => { sels.c2=v; els.c2.value=v; checkNew(els.c2, els.c2n); loadCat3(c1,v); }); loadOpts(`/api/cat2/${c1}?type=image`, els.c2); };
-        const loadCat3 = (c1,c2) => { resetUI(3); loadList(`/api/cat3/${c1}/${c2}?type=image`, 'cat3-container', '小カテゴリ', (v) => { sels.c3=v; els.c3.value=v; checkNew(els.c3, els.c3n); loadFolder(c1,c2,v); }); loadOpts(`/api/cat3/${c1}/${c2}?type=image`, els.c3); };
-        const loadFolder = (c1,c2,c3) => { resetUI(4); loadList(`/api/folders/${c1}/${c2}/${c3}`, 'folder-container', 'フォルダ', (v) => { sels.f=v; els.folder.value=v; loadImages(v); }, true); };
+        // --- カテゴリ作成 (空箱) ---
+        async function createCategoryOnly() {
+            const c1 = els.newC1.value.trim();
+            const c2 = els.newC2.value.trim() || '-';
+            const c3 = els.newC3.value.trim() || '-';
+            
+            if(!c1) return alert('大カテゴリは必須です');
 
-        async function loadList(u, id, t, cb, canDelete=false) {
-            const d = document.getElementById(id); d.innerHTML = `<h4>${t}</h4>`;
+            try {
+                const r = await fetch('/api/categories/create', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ category1: c1, category2: c2, category3: c3 })
+                });
+                const d = await r.json();
+                if(r.ok) {
+                    alert('作成しました');
+                    els.newC1.value = ''; els.newC2.value = ''; els.newC3.value = '';
+                    loadCat1(); // Reload lists
+                } else {
+                    alert('エラー: ' + d.message);
+                }
+            } catch(e) { alert('通信エラー'); }
+        }
+
+        // --- カテゴリ名称変更 (Rename) ---
+        async function renameCategory(level, oldName) {
+            const newName = prompt(`「${oldName}」の新しい名前を入力してください:`, oldName);
+            if(!newName || newName === oldName) return;
+
+            let url = '';
+            if(level === 1) url = `/api/cat1/${encodeURIComponent(oldName)}`;
+            if(level === 2) url = `/api/cat2/${encodeURIComponent(sels.c1)}/${encodeURIComponent(oldName)}`;
+            if(level === 3) url = `/api/cat3/${encodeURIComponent(sels.c1)}/${encodeURIComponent(sels.c2)}/${encodeURIComponent(oldName)}`;
+            if(level === 4) url = `/api/folder/${encodeURIComponent(oldName)}`; // Folder Rename
+
+            try {
+                const r = await fetch(url, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ newName: newName, folderName: newName }) // folder uses body.newName usually
+                });
+                if(r.ok) {
+                    alert('変更しました');
+                    // Reload appropriate level
+                    if(level===1) loadCat1();
+                    else if(level===2) loadCat2(sels.c1);
+                    else if(level===3) loadCat3(sels.c1, sels.c2);
+                    else if(level===4) loadFolder(sels.c1, sels.c2, sels.c3);
+                } else { alert('変更に失敗しました'); }
+            } catch(e) { alert('通信エラー'); }
+        }
+
+        // --- リスト読み込み (Upload用SelectとGallery用Divを同時に更新) ---
+        // type=all を使って空カテゴリも含めて表示する
+        const loadCat1 = () => { 
+            resetUI(1); 
+            // Select用
+            loadOpts('/api/cat1?type=all', els.c1); 
+            // Gallery用
+            loadList('/api/cat1?type=all', els.c1Box, '大カテゴリ', (v) => { 
+                sels.c1=v; els.c1.value=v; // Sync selection
+                checkNew(els.c1, els.c1n); 
+                // Auto-fill creation inputs
+                els.newC1.value = v; 
+                loadCat2(v); 
+            }, 1); 
+        };
+
+        const loadCat2 = (c1) => { 
+            resetUI(2); 
+            loadOpts(`/api/cat2/${encodeURIComponent(c1)}?type=all`, els.c2);
+            loadList(`/api/cat2/${encodeURIComponent(c1)}?type=all`, els.c2Box, '中カテゴリ', (v) => { 
+                sels.c2=v; els.c2.value=v; 
+                checkNew(els.c2, els.c2n); 
+                els.newC2.value = v;
+                loadCat3(c1,v); 
+            }, 2); 
+        };
+
+        const loadCat3 = (c1,c2) => { 
+            resetUI(3); 
+            loadOpts(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}?type=all`, els.c3);
+            loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}?type=all`, els.c3Box, '小カテゴリ', (v) => { 
+                sels.c3=v; els.c3.value=v; 
+                checkNew(els.c3, els.c3n); 
+                els.newC3.value = v;
+                loadFolder(c1,c2,v); 
+            }, 3); 
+        };
+
+        const loadFolder = (c1,c2,c3) => { 
+            resetUI(4); 
+            loadList(`/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`, els.fBox, 'フォルダ', (v) => { 
+                sels.f=v; els.folder.value=v; 
+                loadImages(v); 
+            }, 4, true); // true = can delete folder
+        };
+
+        // Galleryリスト生成 (編集ボタン付き)
+        async function loadList(u, container, t, cb, level, canDelete=false) {
+            container.innerHTML = `<h4>${t}</h4>`;
             try {
                 const r = await fetch(u); const j = await r.json();
-                if(j.length===0) d.innerHTML += '<p style="padding:10px; color:#ccc;">なし</p>';
-                j.forEach(v => {
+                const filtered = j.filter(v => v !== 'default_cat1' && v !== 'default_cat2' && v !== 'default_cat3' && v !== '-' && v !== '__CATEGORY_NODE__');
+                
+                if(filtered.length===0) container.innerHTML += '<p style="padding:10px; color:#ccc; text-align:center;">(なし)</p>';
+                
+                filtered.forEach(v => {
                     const e = document.createElement('div'); e.className = 'gallery-item';
-                    e.innerHTML = `<span>${v}</span>`;
+                    
+                    const span = document.createElement('span');
+                    span.innerText = v;
+                    span.style.flexGrow = '1';
+
+                    const actions = document.createElement('div');
+                    actions.className = 'item-actions';
+                    
+                    // Edit Button (Pencil)
+                    const editBtn = document.createElement('button');
+                    editBtn.className = 'edit-btn'; editBtn.innerHTML = '✎'; 
+                    editBtn.title = '名称変更';
+                    editBtn.onclick = (ev) => { ev.stopPropagation(); renameCategory(level, v); };
+                    actions.appendChild(editBtn);
+
+                    // Delete Button (Only for folders currently supported by backend safely)
                     if(canDelete) {
-                        const btn = document.createElement('div'); btn.className = 'action-buttons';
-                        btn.innerHTML = '<button>x<\/button>'; 
-                        btn.onclick = (ev) => { ev.stopPropagation(); deleteFolder(v); };
-                        e.appendChild(btn);
+                        const delBtn = document.createElement('button');
+                        delBtn.style.color='red'; delBtn.innerHTML='×';
+                        delBtn.style.background='none'; delBtn.style.border='none'; delBtn.style.cursor='pointer';
+                        delBtn.onclick = (ev) => { ev.stopPropagation(); deleteFolder(v); };
+                        actions.appendChild(delBtn);
                     }
-                    e.onclick = () => { d.querySelectorAll('.gallery-item').forEach(x => x.classList.remove('active')); e.classList.add('active'); cb(v); };
-                    d.appendChild(e);
+
+                    e.appendChild(span);
+                    e.appendChild(actions);
+
+                    e.onclick = () => { 
+                        container.querySelectorAll('.gallery-item').forEach(x => x.classList.remove('active')); 
+                        e.classList.add('active'); 
+                        cb(v); 
+                    };
+                    container.appendChild(e);
                 });
-            } catch(e) {}
+            } catch(e) { container.innerHTML += '<p style="color:red;">Error</p>'; }
         }
 
         async function loadImages(f, q='') {
@@ -241,16 +411,9 @@
                     if(img.product_name) {
                         const stockText = (img.stock > 0) ? `在庫:${img.stock}` : `在庫切`;
                         const stockClass = (img.stock > 0) ? 'stock-ok' : 'stock-ng';
-                        
-                        // ★修正: 型番1~4を全て取得し、個別のバッジとして表示
                         const models = [img.model_num1, img.model_num2, img.model_num3, img.model_num4].filter(m => m && m.trim() !== '');
-                        const modelHtml = models.length > 0 
-                            ? `<div class="p-model-container">${models.map(m => `<span class="model-badge">${m}</span>`).join('')}</div>`
-                            : `<div class="p-model-container"><span class="model-badge" style="color:#ccc;">-</span></div>`;
-                        
-                        // lightboxのキャプションにも反映
+                        const modelHtml = models.length > 0 ? `<div class="p-model-container">${models.map(m => `<span class="model-badge">${m}</span>`).join('')}</div>` : `<div class="p-model-container"><span class="model-badge" style="color:#ccc;">-</span></div>`;
                         const captionModels = models.length > 0 ? models.join(' / ') : '-';
-                        
                         infoHtml = `<div class="product-info"><div class="p-name" title="${img.product_name}">${img.product_name}<\/div>${modelHtml}<div class="p-stats"><span class="${stockClass}">${stockText}<\/span><div class="p-prices"><div>EC:<span class="price-val">¥${img.ec_price ? img.ec_price.toLocaleString() : '-'}<\/span><\/div><div>メル:¥${img.mercari_price ? img.mercari_price.toLocaleString() : '-'}<\/div><\/div><\/div><\/div>`;
                         captionHtml = `<div style='text-align:center;'><b style='font-size:1.2em;color:#fff;'>${img.product_name}<\/b><br><span style='font-size:0.9em;color:#ccc;'>${captionModels}<\/span><br><span style='color:${img.stock>0?'#4ade80':'#f87171'};font-weight:bold;'>${stockText}<\/span><br>EC: ¥${img.ec_price} / メル: ¥${img.mercari_price}<\/div>`;
                     } else {
@@ -273,7 +436,7 @@
             try { const r=await fetch(`/api/folder/${encodeURIComponent(name)}`,{method:'DELETE'}); if(r.ok){alert('削除しました');loadFolder(sels.c1,sels.c2,sels.c3);} } catch(e){alert('エラー');}
         }
         
-        async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--<\/option>';j.forEach(v=>s.innerHTML+=`<option value="${v}">${v}<\/option>`);s.innerHTML+='<option value="_new_">+新<\/option>';}catch(e){}}
+        async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--<\/option>';j.forEach(v=>{if(v!=='__CATEGORY_NODE__')s.innerHTML+=`<option value="${v}">${v}<\/option>`});s.innerHTML+='<option value="_new_">+新<\/option>';}catch(e){}}
         function resetUI(l){if(l<=1)document.getElementById('cat2-container').innerHTML='<h4>中カテゴリ<\/h4>';if(l<=2)document.getElementById('cat3-container').innerHTML='<h4>小カテゴリ<\/h4>';if(l<=3)document.getElementById('folder-container').innerHTML='<h4>フォルダ<\/h4>';if(l<=4)els.gal.innerHTML='';}
         function setupDropZone(){els.drop.ondragover=e=>{e.preventDefault();els.drop.classList.add('drag-over');};els.drop.ondragleave=()=>els.drop.classList.remove('drag-over');els.drop.ondrop=e=>{e.preventDefault();els.drop.classList.remove('drag-over');els.file.files=e.dataTransfer.files;els.info.innerText=els.file.files.length+' Files';};els.file.onchange=()=>els.info.innerText=els.file.files.length+' Files';}
         function setupSelects(){const h=(s,i,l)=>{checkNew(s,i);if(s.value!=='_new_'){if(l===1)loadCat2(s.value);if(l===2)loadCat3(sels.c1,s.value);}};els.c1.onchange=()=>h(els.c1,els.c1n,1);els.c2.onchange=()=>h(els.c2,els.c2n,2);els.c3.onchange=()=>checkNew(els.c3,els.c3n);}
