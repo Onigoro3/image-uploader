@@ -9,6 +9,7 @@ const { Pool } = require('pg');
 const session = require('express-session');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
+// ★変更: bcryptjs を使用 (安定性向上)
 const bcrypt = require('bcryptjs'); 
 const PgStore = require('connect-pg-simple')(session); 
 
@@ -16,7 +17,6 @@ const { createWorker } = require('tesseract.js');
 const https = require('https');
 const archiver = require('archiver');
 const { parse } = require('csv-parse/sync');
-// ★追加: fetchを使えるようにする
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
@@ -58,7 +58,7 @@ app.use(express.urlencoded({ extended: false }));
 // --- ▼ 認証設定 ▼ ---
 app.use(session({
     store: new PgStore({ pool: pool, tableName: 'user_sessions', createTableIfMissing: true }),
-    secret: process.env.SESSION_SECRET || 'secret_key', 
+    secret: process.env.SESSION_SECRET || 'secret_key_fallback', // ★修正: 秘密鍵がない場合の対策
     resave: false, saveUninitialized: false, proxy: true, 
     cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, secure: 'auto', httpOnly: true, sameSite: 'lax' } 
 }));
@@ -71,6 +71,7 @@ passport.use(new LocalStrategy(async (username, password, done) => {
         const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
         if (rows.length === 0) return done(null, false, { message: 'ユーザー名またはパスワードが違います。' });
         const user = rows[0];
+        // bcryptjsで比較
         if (await bcrypt.compare(password, user.password_hash)) return done(null, user);
         else return done(null, false, { message: 'ユーザー名またはパスワードが違います。' });
     } catch (error) { return done(error); }
@@ -102,8 +103,11 @@ const createTable = async () => {
         try {
             await client.query(`CREATE TABLE IF NOT EXISTS images (id SERIAL PRIMARY KEY, title VARCHAR(1024) NOT NULL, url VARCHAR(1024) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(100) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
+            
+            // セッションテーブル (安全な作成)
             await client.query(`CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default" PRIMARY KEY, "sess" json NOT NULL, "expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE);`);
             await client.query(`CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`);
+            
             await client.query(`CREATE TABLE IF NOT EXISTS product_info (product_code VARCHAR(255) PRIMARY KEY, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS csv_uploads (id SERIAL PRIMARY KEY, filename VARCHAR(255) NOT NULL, uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
 
@@ -111,13 +115,11 @@ const createTable = async () => {
                 await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='${table}' AND column_name='${col}') THEN ALTER TABLE ${table} ADD COLUMN ${col} ${type}; END IF; END $$;`);
             };
 
-            // images
             await addCol('images', 'category_1', 'VARCHAR(100) DEFAULT \'default_cat1\'');
             await addCol('images', 'category_2', 'VARCHAR(100) DEFAULT \'default_cat2\'');
             await addCol('images', 'category_3', 'VARCHAR(100) DEFAULT \'default_cat3\'');
             await addCol('images', 'folder_name', 'VARCHAR(100) DEFAULT \'default_folder\'');
 
-            // product_info
             await addCol('product_info', 'product_name', 'VARCHAR(1024)');
             await addCol('product_info', 'model_num1', 'VARCHAR(255)');
             await addCol('product_info', 'model_num2', 'VARCHAR(255)');
@@ -132,7 +134,6 @@ const createTable = async () => {
 
             await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='code') THEN ALTER TABLE product_info RENAME COLUMN code TO product_code; END IF; END $$;`);
 
-            // csv_uploads
             await addCol('csv_uploads', 'category_1', 'VARCHAR(100) DEFAULT \'未分類\'');
             await addCol('csv_uploads', 'category_2', 'VARCHAR(100) DEFAULT \'-\'');
             await addCol('csv_uploads', 'category_3', 'VARCHAR(100) DEFAULT \'-\'');
@@ -156,7 +157,21 @@ app.post('/api/auth/register', async (req, res) => {
     try { const hash = await bcrypt.hash(password, 10); await pool.query('INSERT INTO users (username, password_hash) VALUES ($1, $2)', [username, hash]); res.status(201).json({ message: '登録成功' });
     } catch (e) { if (e.code === '23505') res.status(409).json({ message: 'そのユーザー名は使用済みです' }); else res.status(500).json({ message: 'サーバーエラー' }); }
 });
-app.post('/api/auth/login', (req, res, next) => { passport.authenticate('local', (err, user, info) => { if (err) return next(err); if (!user) return res.status(401).json({ message: info.message || 'ログイン失敗' }); req.logIn(user, (err) => { if (err) return next(err); return res.json({ message: 'ログイン成功', user: user.username }); }); })(req, res, next); });
+
+app.post('/api/auth/login', (req, res, next) => {
+    passport.authenticate('local', (err, user, info) => {
+        if (err) return next(err);
+        if (!user) {
+            // ★修正: エラーメッセージをJSONで確実に返す
+            return res.status(401).json({ message: info ? info.message : 'ログイン失敗' });
+        }
+        req.logIn(user, (err) => {
+            if (err) return next(err);
+            return res.json({ message: 'ログイン成功', user: user.username });
+        });
+    })(req, res, next);
+});
+
 app.post('/api/auth/logout', (req, res, next) => { req.logout((err) => { if(err)return next(err); req.session.destroy(() => { res.clearCookie('connect.sid'); res.json({message:'ログアウト'}); }); }); });
 app.get('/api/auth/check', (req, res) => { if (req.isAuthenticated()) res.json({ loggedIn: true, username: req.user.username }); else res.json({ loggedIn: false }); });
 
@@ -181,80 +196,36 @@ app.get('/api/cat2/:c1', isAuthenticated, getCategoryList('category_2', 2));
 app.get('/api/cat3/:c1/:c2', isAuthenticated, getCategoryList('category_3', 3));
 app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 ORDER BY folder_name', [req.params.c1, req.params.c2, req.params.c3]); res.json(rows.map(r => r.folder_name)); }));
 
-// --- ★★★ メルカリ在庫 取り込み機能 (修正) ★★★ ---
+// --- メルカリ在庫連携 ---
 app.post('/api/mercari/pull-stock', isAuthenticated, apiHandler(async (req, res) => {
     const { token } = req.body;
     if (!token) return res.status(400).json({ message: 'アクセストークンが必要です' });
-
-    // 1. メルカリShops API (GraphQL) エンドポイント
     const MERCARI_API_URL = 'https://api.mercari-shops.com/v1/graphql';
-
-    // 2. 商品一覧と在庫を取得するクエリ (一般的な例)
-    // ※ 実際のフィールド名が異なる場合は、ドキュメントを見て修正が必要です
-    const query = `
-        query GetProducts {
-          products(first: 100) {
-            edges {
-              node {
-                id  # メルカリ商品ID
-                variants {
-                  id
-                  inventory {
-                    stockQuantity
-                  }
-                }
-              }
-            }
-          }
-        }
-    `;
+    const query = `query GetProducts { products(first: 50) { edges { node { id variants { id inventory { stockQuantity } } } } } }`;
 
     try {
-        // 3. メルカリにリクエスト送信
         const response = await fetch(MERCARI_API_URL, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ query })
         });
-
         const result = await response.json();
+        if (result.errors) return res.status(400).json({ message: 'メルカリAPIエラー', details: result.errors });
 
-        if (result.errors) {
-            console.error('Mercari API Error:', result.errors);
-            return res.status(400).json({ message: 'メルカリAPIエラー', details: result.errors });
-        }
-
-        // 4. データ解析 & DB更新
         let updateCount = 0;
         const products = result.data?.products?.edges || [];
-
         for (const edge of products) {
             const product = edge.node;
             const mercariId = product.id;
-            // バリエーションがある場合、とりあえず最初の1つの在庫を採用する簡易実装
-            // (商品IDと1対1で紐付ける前提)
             const stock = product.variants?.[0]?.inventory?.stockQuantity;
-
             if (mercariId && stock !== undefined) {
-                const updateRes = await pool.query(
-                    'UPDATE product_info SET stock = $1, updated_at = CURRENT_TIMESTAMP WHERE mercari_product_id = $2',
-                    [stock, mercariId]
-                );
+                const updateRes = await pool.query('UPDATE product_info SET stock = $1, updated_at = CURRENT_TIMESTAMP WHERE mercari_product_id = $2', [stock, mercariId]);
                 if (updateRes.rowCount > 0) updateCount++;
             }
         }
-
         res.json({ message: `在庫同期完了: ${updateCount}件 更新しました`, totalChecked: products.length });
-
-    } catch (e) {
-        console.error("Mercari Sync Error:", e);
-        res.status(500).json({ message: '同期処理中にエラーが発生しました: ' + e.message });
-    }
+    } catch (e) { res.status(500).json({ message: '同期エラー: ' + e.message }); }
 }));
-// --- ▲ メルカリ連携ここまで ▲ ---
 
 // --- 商品管理 ---
 app.get('/api/products/stats', isAuthenticated, apiHandler(async (req, res) => {

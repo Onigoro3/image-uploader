@@ -3,29 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <title>ログイン</title>
-    <style>body{font-family:sans-serif;display:grid;place-items:center;height:80vh;}form{padding:20px;border:1px solid #ccc;}</style>
+    <style>
+        body { font-family: sans-serif; display: grid; place-items: center; min-height: 80vh; background-color: #f4f4f4; }
+        form { background: #fff; border: 1px solid #ccc; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); width: 300px; }
+        div { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background-color: #0056b3; }
+        p#status { color: red; font-weight: bold; margin-top: 10px; font-size: 0.9em; word-break: break-all; }
+        a { color: #007bff; }
+    </style>
 </head>
 <body>
     <form id="loginForm">
-        <h2>ログイン</h2>
-        <input type="text" id="username" placeholder="ユーザー名" required style="display:block;margin-bottom:10px;width:200px;padding:5px;">
-        <input type="password" id="password" placeholder="パスワード" required style="display:block;margin-bottom:10px;width:200px;padding:5px;">
+        <h2 style="text-align:center;">画像アップローダー</h2>
+        <div>
+            <label for="username">ユーザー名:</label>
+            <input type="text" id="username" name="username" required>
+        </div>
+        <div>
+            <label for="password">パスワード:</label>
+            <input type="password" id="password" name="password" required>
+        </div>
         <button type="submit">ログイン</button>
-        <p id="status" style="color:red;"></p>
-        <a href="/register">新規登録</a>
+        <p id="status"></p>
+        <p style="text-align: center; margin-top: 15px;">
+            アカウントがありませんか？ <a href="/register">新規登録</a>
+        </p>
     </form>
     <script>
-        document.getElementById('loginForm').onsubmit = async (e) => {
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const u = document.getElementById('username').value;
-            const p = document.getElementById('password').value;
-            const res = await fetch('/api/auth/login', {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username:u, password:p})
-            });
-            const data = await res.json();
-            if(res.ok) window.location.href = '/';
-            else document.getElementById('status').innerText = data.message;
-        };
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const status = document.getElementById('status');
+            status.textContent = '';
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                // レスポンスがJSONか確認
+                const contentType = response.headers.get("content-type");
+                if (contentType && contentType.indexOf("application/json") !== -1) {
+                    const data = await response.json();
+                    if (response.ok) {
+                        window.location.href = '/'; 
+                    } else {
+                        status.textContent = data.message || 'ログイン失敗';
+                    }
+                } else {
+                    // JSONじゃないエラー（サーバーダウン等）
+                    const text = await response.text();
+                    console.error(text);
+                    status.textContent = 'サーバーエラーが発生しました(500)';
+                }
+            } catch (error) {
+                console.error(error);
+                status.textContent = '通信エラーが発生しました';
+            }
+        });
     </script>
 </body>
 </html>
