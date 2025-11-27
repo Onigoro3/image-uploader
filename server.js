@@ -16,7 +16,6 @@ const { createWorker } = require('tesseract.js');
 const https = require('https');
 const archiver = require('archiver');
 const { parse } = require('csv-parse/sync');
-// fetchを使えるようにする
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
@@ -178,16 +177,19 @@ app.get('/api/cat2/:c1', isAuthenticated, getCategoryList('category_2', 2));
 app.get('/api/cat3/:c1/:c2', isAuthenticated, getCategoryList('category_3', 3));
 app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 ORDER BY folder_name', [req.params.c1, req.params.c2, req.params.c3]); res.json(rows.map(r => r.folder_name)); }));
 
-// --- ★★★ メルカリ在庫 取り込み機能 (完全修正版) ★★★ ---
+// --- ★★★ メルカリ在庫 取り込み機能 (自動探索版) ★★★ ---
 app.post('/api/mercari/pull-stock', isAuthenticated, apiHandler(async (req, res) => {
     const { token } = req.body;
     if (!token) return res.status(400).json({ message: 'アクセストークンが必要です' });
 
-    // メルカリShops API エンドポイント
-    const MERCARI_API_URL = 'https://api.mercari-shops.com/v1/graphql';
-    
-    // 在庫を取得するGraphQLクエリ
-    // products -> edges -> node -> id (商品ID), variants -> inventory -> stockQuantity (在庫)
+    // 試すURL候補 (ショップID込み、なし、サンドボックスなど)
+    const ENDPOINTS = [
+        'https://api.mercari-shops.com/v1/graphql',
+        'https://api.mercari-shops.com/graphql',
+        // ショップID込みのパターン (ユーザー提供のIDを使用)
+        'https://api.mercari-shops.com/v1/shops/LZTviPdpw7sHE9dYjZZsq6/graphql' 
+    ];
+
     const query = `
         query GetProducts {
           products(first: 50) {
@@ -206,65 +208,55 @@ app.post('/api/mercari/pull-stock', isAuthenticated, apiHandler(async (req, res)
         }
     `;
 
-    try {
-        // ★修正: User-Agentを追加して404を回避
-        const response = await fetch(MERCARI_API_URL, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json',
-                'User-Agent': 'MyMercariApp/1.0 (Node.js/22)' // 任意のUAを設定
-            },
-            body: JSON.stringify({ query })
-        });
+    let lastError = null;
 
-        // レスポンスチェック
-        if (!response.ok) {
-            const text = await response.text();
-            // HTMLが返ってくる場合はURL間違いか認証エラー
-            if (text.trim().startsWith('<')) {
-                return res.status(response.status).json({ message: `APIエラー (Status: ${response.status})`, details: 'HTMLが返されました。URLまたはトークンが無効な可能性があります。' });
+    // 複数のURLを順番に試す
+    for (const url of ENDPOINTS) {
+        try {
+            console.log(`Trying Mercari API: ${url}`);
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ query })
+            });
+
+            if (response.ok) {
+                // 成功したらデータを処理してループを抜ける
+                const result = await response.json();
+                if (result.errors) throw new Error(JSON.stringify(result.errors));
+
+                let updateCount = 0;
+                const products = result.data?.products?.edges || [];
+
+                for (const edge of products) {
+                    const product = edge.node;
+                    const mercariId = product.id;
+                    const stock = product.variants?.[0]?.inventory?.stockQuantity;
+                    if (mercariId && stock !== undefined) {
+                        const updateRes = await pool.query('UPDATE product_info SET stock = $1, updated_at = CURRENT_TIMESTAMP WHERE mercari_product_id = $2', [stock, mercariId]);
+                        if (updateRes.rowCount > 0) updateCount++;
+                    }
+                }
+                return res.json({ message: `在庫同期完了: ${updateCount}件 更新しました`, totalChecked: products.length });
+            } else {
+                // 失敗したら次のURLへ
+                const text = await response.text();
+                lastError = `Status: ${response.status}, Msg: ${text.substring(0, 100)}`;
+                console.warn(`Failed ${url}: ${lastError}`);
             }
-            return res.status(response.status).json({ message: `APIエラー`, details: text });
+        } catch (e) {
+            lastError = e.message;
+            console.warn(`Error ${url}: ${e.message}`);
         }
-
-        const result = await response.json();
-        if (result.errors) {
-            return res.status(400).json({ message: 'GraphQLエラー', details: result.errors });
-        }
-
-        // 在庫データの更新処理
-        let updateCount = 0;
-        const products = result.data?.products?.edges || [];
-
-        for (const edge of products) {
-            const product = edge.node;
-            const mercariId = product.id;
-            
-            // バリエーションの在庫を取得 (簡易的に最初のバリエーションを使用)
-            // ※本来はSKUなどでマッチングすべきですが、今回は商品IDで紐付けます
-            const stock = product.variants?.[0]?.inventory?.stockQuantity;
-
-            if (mercariId && stock !== undefined) {
-                // DBの在庫を上書き
-                const updateRes = await pool.query(
-                    'UPDATE product_info SET stock = $1, updated_at = CURRENT_TIMESTAMP WHERE mercari_product_id = $2',
-                    [stock, mercariId]
-                );
-                if (updateRes.rowCount > 0) updateCount++;
-            }
-        }
-
-        res.json({ 
-            message: `在庫同期完了: ${updateCount}件 更新しました`, 
-            totalChecked: products.length,
-            details: updateCount === 0 ? "※一致するメルカリIDが見つかりませんでした。CSVに正しいIDが登録されているか確認してください。" : ""
-        });
-
-    } catch (e) {
-        console.error("Mercari Sync Error:", e);
-        res.status(500).json({ message: '同期エラー: ' + e.message });
     }
+
+    // 全滅した場合
+    res.status(500).json({ message: '全ての接続先で失敗しました', details: lastError });
 }));
 // --- ▲ メルカリ連携ここまで ▲ ---
 
