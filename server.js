@@ -163,25 +163,43 @@ app.get('/api/auth/check', (req, res) => { if (req.isAuthenticated()) res.json({
 
 app.post('/api/admin/init-db', isAuthenticated, apiHandler(async (req, res) => { await createTable(); res.json({ message: 'データベース構成を更新しました。' }); }));
 
-// --- カテゴリ取得 (強化版: imagesとcsv_uploadsを統合) ---
+// --- カテゴリ取得 (強化版: imagesとcsv_uploadsを統合し、カウントも返す) ---
 const getCategoryList = (col, level) => apiHandler(async (req, res) => {
     let query = "", params = [];
-    
-    // imagesとcsv_uploadsの両方からカテゴリを取得して結合(UNION)
+    let countQuery = "", countParams = [];
+
+    // 1. まず全カテゴリ名を取得 (UNION)
     if (level === 1) {
         query = `SELECT ${col} FROM images UNION SELECT ${col} FROM csv_uploads ORDER BY ${col}`;
+        countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images GROUP BY ${col}`;
     } else if (level === 2) {
         query = `SELECT ${col} FROM images WHERE category_1=$1 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$2 ORDER BY ${col}`;
         params = [req.params.c1, req.params.c1];
+        countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images WHERE category_1=$1 GROUP BY ${col}`;
+        countParams = [req.params.c1];
     } else {
         query = `SELECT ${col} FROM images WHERE category_1=$1 AND category_2=$2 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$3 AND category_2=$4 ORDER BY ${col}`;
         params = [req.params.c1, req.params.c2, req.params.c1, req.params.c2];
+        countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images WHERE category_1=$1 AND category_2=$2 GROUP BY ${col}`;
+        countParams = [req.params.c1, req.params.c2];
     }
     
-    const { rows } = await pool.query(query, params);
-    // 重複と空値を除去
-    const list = [...new Set(rows.map(r => r[col]))].filter(v => v);
-    res.json(list);
+    // カテゴリ名リストを取得
+    const { rows: nameRows } = await pool.query(query, params);
+    const distinctNames = [...new Set(nameRows.map(r => r[col]))].filter(v => v);
+
+    // 画像カウント数を取得
+    const { rows: countRows } = await pool.query(countQuery, countParams);
+    const countMap = {};
+    countRows.forEach(r => countMap[r.name] = parseInt(r.cnt));
+
+    // マージしてオブジェクト配列で返す { name: "ポケカ", count: 5 }
+    const result = distinctNames.map(name => ({
+        name: name,
+        count: countMap[name] || 0
+    }));
+
+    res.json(result);
 });
 
 app.get('/api/cat1', isAuthenticated, getCategoryList('category_1', 1));
@@ -189,8 +207,13 @@ app.get('/api/cat2/:c1', isAuthenticated, getCategoryList('category_2', 2));
 app.get('/api/cat3/:c1/:c2', isAuthenticated, getCategoryList('category_3', 3));
 
 app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res) => { 
-    const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 ORDER BY folder_name', [req.params.c1, req.params.c2, req.params.c3]); 
-    res.json(rows.map(r => r.folder_name)); 
+    // フォルダもカウント付きで返す
+    const { rows } = await pool.query(
+        `SELECT folder_name as name, COUNT(*) as count FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 GROUP BY folder_name ORDER BY folder_name`, 
+        [req.params.c1, req.params.c2, req.params.c3]
+    );
+    // name, count の形式に統一
+    res.json(rows.map(r => ({ name: r.name, count: parseInt(r.count) })));
 }));
 
 // --- 商品管理 ---

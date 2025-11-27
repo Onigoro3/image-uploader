@@ -87,6 +87,8 @@
         .gallery-item:hover { background-color: #f0fdf4; }
         .gallery-item.active { background-color: #15803d; color: white; }
         .gallery-item.active .edit-btn { color: #fff; } /* 選択中は白く */
+        .count-badge { font-size: 0.85em; color: #888; margin-left: 4px; }
+        .gallery-item.active .count-badge { color: #e2e8f0; }
 
         .edit-btn { background: none; border: none; cursor: pointer; color: #cbd5e1; font-size: 1.1em; padding: 0 5px; line-height: 1; }
         .edit-btn:hover { color: #f59e0b; }
@@ -311,11 +313,11 @@
             loadOpts('/api/cat1?type=all', els.c1); 
             // Gallery用
             loadList('/api/cat1?type=all', els.c1Box, '大カテゴリ', (v) => { 
-                sels.c1=v; els.c1.value=v; // Sync selection
+                sels.c1=v.name; els.c1.value=v.name; // Sync selection
                 checkNew(els.c1, els.c1n); 
                 // Auto-fill creation inputs
-                els.newC1.value = v; 
-                loadCat2(v); 
+                els.newC1.value = v.name; 
+                loadCat2(v.name); 
             }, 1); 
         };
 
@@ -323,10 +325,10 @@
             resetUI(2); 
             loadOpts(`/api/cat2/${encodeURIComponent(c1)}?type=all`, els.c2);
             loadList(`/api/cat2/${encodeURIComponent(c1)}?type=all`, els.c2Box, '中カテゴリ', (v) => { 
-                sels.c2=v; els.c2.value=v; 
+                sels.c2=v.name; els.c2.value=v.name; 
                 checkNew(els.c2, els.c2n); 
-                els.newC2.value = v;
-                loadCat3(c1,v); 
+                els.newC2.value = v.name;
+                loadCat3(c1,v.name); 
             }, 2); 
         };
 
@@ -334,35 +336,37 @@
             resetUI(3); 
             loadOpts(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}?type=all`, els.c3);
             loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}?type=all`, els.c3Box, '小カテゴリ', (v) => { 
-                sels.c3=v; els.c3.value=v; 
+                sels.c3=v.name; els.c3.value=v.name; 
                 checkNew(els.c3, els.c3n); 
-                els.newC3.value = v;
-                loadFolder(c1,c2,v); 
+                els.newC3.value = v.name;
+                loadFolder(c1,c2,v.name); 
             }, 3); 
         };
 
         const loadFolder = (c1,c2,c3) => { 
             resetUI(4); 
             loadList(`/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`, els.fBox, 'フォルダ', (v) => { 
-                sels.f=v; els.folder.value=v; 
-                loadImages(v); 
+                sels.f=v.name; els.folder.value=v.name; 
+                loadImages(v.name); 
             }, 4, true); // true = can delete folder
         };
 
-        // Galleryリスト生成 (編集ボタン付き)
+        // Galleryリスト生成 (編集ボタン付き + カウント表示)
         async function loadList(u, container, t, cb, level, canDelete=false) {
             container.innerHTML = `<h4>${t}</h4>`;
             try {
                 const r = await fetch(u); const j = await r.json();
-                const filtered = j.filter(v => v !== 'default_cat1' && v !== 'default_cat2' && v !== 'default_cat3' && v !== '-' && v !== '__CATEGORY_NODE__');
+                // サーバーから {name: "...", count: N} の形で返ってくる
+                const filtered = j.filter(v => v.name !== 'default_cat1' && v.name !== 'default_cat2' && v.name !== 'default_cat3' && v.name !== '-' && v.name !== '__CATEGORY_NODE__');
                 
                 if(filtered.length===0) container.innerHTML += '<p style="padding:10px; color:#ccc; text-align:center;">(なし)</p>';
                 
-                filtered.forEach(v => {
+                filtered.forEach(item => {
                     const e = document.createElement('div'); e.className = 'gallery-item';
                     
                     const span = document.createElement('span');
-                    span.innerText = v;
+                    // 名前とカッコ書きのカウントを表示
+                    span.innerHTML = `${item.name} <small class="count-badge">(${item.count})</small>`;
                     span.style.flexGrow = '1';
 
                     const actions = document.createElement('div');
@@ -372,7 +376,7 @@
                     const editBtn = document.createElement('button');
                     editBtn.className = 'edit-btn'; editBtn.innerHTML = '✎'; 
                     editBtn.title = '名称変更';
-                    editBtn.onclick = (ev) => { ev.stopPropagation(); renameCategory(level, v); };
+                    editBtn.onclick = (ev) => { ev.stopPropagation(); renameCategory(level, item.name); };
                     actions.appendChild(editBtn);
 
                     // Delete Button (Only for folders currently supported by backend safely)
@@ -380,7 +384,7 @@
                         const delBtn = document.createElement('button');
                         delBtn.style.color='red'; delBtn.innerHTML='×';
                         delBtn.style.background='none'; delBtn.style.border='none'; delBtn.style.cursor='pointer';
-                        delBtn.onclick = (ev) => { ev.stopPropagation(); deleteFolder(v); };
+                        delBtn.onclick = (ev) => { ev.stopPropagation(); deleteFolder(item.name); };
                         actions.appendChild(delBtn);
                     }
 
@@ -390,7 +394,7 @@
                     e.onclick = () => { 
                         container.querySelectorAll('.gallery-item').forEach(x => x.classList.remove('active')); 
                         e.classList.add('active'); 
-                        cb(v); 
+                        cb(item); 
                     };
                     container.appendChild(e);
                 });
@@ -436,7 +440,7 @@
             try { const r=await fetch(`/api/folder/${encodeURIComponent(name)}`,{method:'DELETE'}); if(r.ok){alert('削除しました');loadFolder(sels.c1,sels.c2,sels.c3);} } catch(e){alert('エラー');}
         }
         
-        async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--<\/option>';j.forEach(v=>{if(v!=='__CATEGORY_NODE__')s.innerHTML+=`<option value="${v}">${v}<\/option>`});s.innerHTML+='<option value="_new_">+新<\/option>';}catch(e){}}
+        async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--<\/option>';j.forEach(v=>{if(v.name!=='__CATEGORY_NODE__')s.innerHTML+=`<option value="${v.name}">${v.name} (${v.count})<\/option>`});s.innerHTML+='<option value="_new_">+新<\/option>';}catch(e){}}
         function resetUI(l){if(l<=1)document.getElementById('cat2-container').innerHTML='<h4>中カテゴリ<\/h4>';if(l<=2)document.getElementById('cat3-container').innerHTML='<h4>小カテゴリ<\/h4>';if(l<=3)document.getElementById('folder-container').innerHTML='<h4>フォルダ<\/h4>';if(l<=4)els.gal.innerHTML='';}
         function setupDropZone(){els.drop.ondragover=e=>{e.preventDefault();els.drop.classList.add('drag-over');};els.drop.ondragleave=()=>els.drop.classList.remove('drag-over');els.drop.ondrop=e=>{e.preventDefault();els.drop.classList.remove('drag-over');els.file.files=e.dataTransfer.files;els.info.innerText=els.file.files.length+' Files';};els.file.onchange=()=>els.info.innerText=els.file.files.length+' Files';}
         function setupSelects(){const h=(s,i,l)=>{checkNew(s,i);if(s.value!=='_new_'){if(l===1)loadCat2(s.value);if(l===2)loadCat3(sels.c1,s.value);}};els.c1.onchange=()=>h(els.c1,els.c1n,1);els.c2.onchange=()=>h(els.c2,els.c2n,2);els.c3.onchange=()=>checkNew(els.c3,els.c3n);}
