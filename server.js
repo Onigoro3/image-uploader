@@ -16,6 +16,7 @@ const { createWorker } = require('tesseract.js');
 const https = require('https');
 const archiver = require('archiver');
 const { parse } = require('csv-parse/sync');
+// fetchを使えるようにする
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
@@ -110,13 +111,11 @@ const createTable = async () => {
                 await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='${table}' AND column_name='${col}') THEN ALTER TABLE ${table} ADD COLUMN ${col} ${type}; END IF; END $$;`);
             };
 
-            // images
             await addCol('images', 'category_1', 'VARCHAR(100) DEFAULT \'default_cat1\'');
             await addCol('images', 'category_2', 'VARCHAR(100) DEFAULT \'default_cat2\'');
             await addCol('images', 'category_3', 'VARCHAR(100) DEFAULT \'default_cat3\'');
             await addCol('images', 'folder_name', 'VARCHAR(100) DEFAULT \'default_folder\'');
 
-            // product_info
             await addCol('product_info', 'product_name', 'VARCHAR(1024)');
             await addCol('product_info', 'model_num1', 'VARCHAR(255)');
             await addCol('product_info', 'model_num2', 'VARCHAR(255)');
@@ -127,11 +126,10 @@ const createTable = async () => {
             await addCol('product_info', 'mercari_price', 'INTEGER DEFAULT 0');
             await addCol('product_info', 'image_filename', 'VARCHAR(1024)');
             await addCol('product_info', 'csv_upload_id', 'INTEGER');
-            await addCol('product_info', 'mercari_product_id', 'VARCHAR(255)'); // メルカリ商品ID
+            await addCol('product_info', 'mercari_product_id', 'VARCHAR(255)');
 
             await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='code') THEN ALTER TABLE product_info RENAME COLUMN code TO product_code; END IF; END $$;`);
 
-            // csv_uploads
             await addCol('csv_uploads', 'category_1', 'VARCHAR(100) DEFAULT \'未分類\'');
             await addCol('csv_uploads', 'category_2', 'VARCHAR(100) DEFAULT \'-\'');
             await addCol('csv_uploads', 'category_3', 'VARCHAR(100) DEFAULT \'-\'');
@@ -180,13 +178,16 @@ app.get('/api/cat2/:c1', isAuthenticated, getCategoryList('category_2', 2));
 app.get('/api/cat3/:c1/:c2', isAuthenticated, getCategoryList('category_3', 3));
 app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 ORDER BY folder_name', [req.params.c1, req.params.c2, req.params.c3]); res.json(rows.map(r => r.folder_name)); }));
 
-// --- ★★★ メルカリ在庫 取り込み機能 (修正版) ★★★ ---
+// --- ★★★ メルカリ在庫 取り込み機能 (完全修正版) ★★★ ---
 app.post('/api/mercari/pull-stock', isAuthenticated, apiHandler(async (req, res) => {
     const { token } = req.body;
     if (!token) return res.status(400).json({ message: 'アクセストークンが必要です' });
 
+    // メルカリShops API エンドポイント
     const MERCARI_API_URL = 'https://api.mercari-shops.com/v1/graphql';
     
+    // 在庫を取得するGraphQLクエリ
+    // products -> edges -> node -> id (商品ID), variants -> inventory -> stockQuantity (在庫)
     const query = `
         query GetProducts {
           products(first: 50) {
@@ -206,42 +207,46 @@ app.post('/api/mercari/pull-stock', isAuthenticated, apiHandler(async (req, res)
     `;
 
     try {
+        // ★修正: User-Agentを追加して404を回避
         const response = await fetch(MERCARI_API_URL, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
-                'User-Agent': 'MyImageUploader/1.0', // ★修正: User-Agentを追加
-                'Accept': 'application/json'
+                'User-Agent': 'MyMercariApp/1.0 (Node.js/22)' // 任意のUAを設定
             },
             body: JSON.stringify({ query })
         });
 
-        // ★修正: エラー時にHTMLが返ってきてもクラッシュさせず、内容を確認できるようにする
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
+        // レスポンスチェック
+        if (!response.ok) {
             const text = await response.text();
-            console.error('Mercari API Error (Non-JSON):', text);
-            return res.status(response.status).json({ 
-                message: `メルカリAPIエラー (Status: ${response.status})`, 
-                details: text.substring(0, 200) // 長すぎる場合はカット
-            });
+            // HTMLが返ってくる場合はURL間違いか認証エラー
+            if (text.trim().startsWith('<')) {
+                return res.status(response.status).json({ message: `APIエラー (Status: ${response.status})`, details: 'HTMLが返されました。URLまたはトークンが無効な可能性があります。' });
+            }
+            return res.status(response.status).json({ message: `APIエラー`, details: text });
         }
 
         const result = await response.json();
         if (result.errors) {
-            return res.status(400).json({ message: 'メルカリAPIエラー', details: result.errors });
+            return res.status(400).json({ message: 'GraphQLエラー', details: result.errors });
         }
 
+        // 在庫データの更新処理
         let updateCount = 0;
         const products = result.data?.products?.edges || [];
 
         for (const edge of products) {
             const product = edge.node;
             const mercariId = product.id;
+            
+            // バリエーションの在庫を取得 (簡易的に最初のバリエーションを使用)
+            // ※本来はSKUなどでマッチングすべきですが、今回は商品IDで紐付けます
             const stock = product.variants?.[0]?.inventory?.stockQuantity;
 
             if (mercariId && stock !== undefined) {
+                // DBの在庫を上書き
                 const updateRes = await pool.query(
                     'UPDATE product_info SET stock = $1, updated_at = CURRENT_TIMESTAMP WHERE mercari_product_id = $2',
                     [stock, mercariId]
@@ -250,11 +255,15 @@ app.post('/api/mercari/pull-stock', isAuthenticated, apiHandler(async (req, res)
             }
         }
 
-        res.json({ message: `在庫同期完了: ${updateCount}件 更新しました`, totalChecked: products.length });
+        res.json({ 
+            message: `在庫同期完了: ${updateCount}件 更新しました`, 
+            totalChecked: products.length,
+            details: updateCount === 0 ? "※一致するメルカリIDが見つかりませんでした。CSVに正しいIDが登録されているか確認してください。" : ""
+        });
 
     } catch (e) {
         console.error("Mercari Sync Error:", e);
-        res.status(500).json({ message: '同期処理中にエラーが発生しました: ' + e.message });
+        res.status(500).json({ message: '同期エラー: ' + e.message });
     }
 }));
 // --- ▲ メルカリ連携ここまで ▲ ---
