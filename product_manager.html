@@ -60,6 +60,15 @@
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; white-space: nowrap; }
         th { background-color: #f4f4f4; font-weight: bold; }
 
+        /* モーダル */
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
+        .modal-content { background-color: #fefefe; margin: 15% auto; padding: 20px; border: 1px solid #888; width: 90%; max-width: 500px; border-radius: 8px; }
+        .modal-header { font-weight: bold; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .modal-body div { margin-bottom: 15px; }
+        .modal-body label { display: block; margin-bottom: 5px; font-size: 0.9em; color: #555; }
+        .modal-body input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .modal-footer { text-align: right; margin-top: 20px; }
+
         @media (max-width: 768px) { #gallery-section { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -88,7 +97,7 @@
     </div>
 
     <div class="panel">
-        <h3><span>📂 カテゴリ選択</span></h3>
+        <h3><span>📂 カテゴリ選択</span> <button id="createCatBtn" style="font-size:0.8em; background:#22c55e; color:white; display:none;">このカテゴリ構成を登録(空作成)</button></h3>
         <p style="font-size:0.9em; color:#666; margin-bottom:10px;">CSVの登録先、および下のリストの絞り込みに使用します。</p>
         <div id="gallery-section">
             <div id="cat1-container" class="gallery-column"><h4>大カテゴリ</h4></div>
@@ -117,6 +126,23 @@
         <div id="csv-file-list">読み込み中...</div>
     </div>
 
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">CSV情報の編集・移動</div>
+            <div class="modal-body">
+                <input type="hidden" id="editId">
+                <div><label>ファイル名:</label><input type="text" id="editFilename"></div>
+                <div><label>大カテゴリ (移動先):</label><input type="text" id="editCat1"></div>
+                <div><label>中カテゴリ (移動先):</label><input type="text" id="editCat2"></div>
+                <div><label>小カテゴリ (移動先):</label><input type="text" id="editCat3"></div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal()" style="background:#666; color:white;">キャンセル</button>
+                <button onclick="saveEdit()" style="background:#15803d; color:white;">保存して移動</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         fetch('/api/auth/check').then(r=>r.json()).then(d=>{if(!d.loggedIn)location.href='/login'});
 
@@ -127,7 +153,10 @@
             impStat: document.getElementById('csvImportStatus'), csvList: document.getElementById('csv-file-list'),
             dlTmp: document.getElementById('dlTemplateBtn'), pathDisp: document.getElementById('selected-path-display'),
             c1n: document.getElementById('cat1NewInput'), c2n: document.getElementById('cat2NewInput'), c3n: document.getElementById('cat3NewInput'),
-            listTitle: document.getElementById('csv-list-title'), allDataBox: document.getElementById('all-data-container'), allDataTable: document.getElementById('all-data-table')
+            listTitle: document.getElementById('csv-list-title'), allDataBox: document.getElementById('all-data-container'), allDataTable: document.getElementById('all-data-table'),
+            createCatBtn: document.getElementById('createCatBtn'),
+            modal: document.getElementById('editModal'), editId: document.getElementById('editId'), 
+            editFn: document.getElementById('editFilename'), editC1: document.getElementById('editCat1'), editC2: document.getElementById('editCat2'), editC3: document.getElementById('editCat3')
         };
 
         let sels = { c1: null, c2: null, c3: null };
@@ -141,8 +170,9 @@
         els.impBtn.onclick = importCsv;
         els.checkBtn.onclick = checkMismatch;
         els.showAllBtn.onclick = loadAllData;
+        els.createCatBtn.onclick = createCategoryOnly;
 
-        // --- 全データ表示 (修正: 型番3, 4を追加) ---
+        // --- 全データ表示 ---
         async function loadAllData() {
             els.allDataBox.style.display = 'block';
             els.allDataTable.innerHTML = '<tr><td>読み込み中...</td></tr>';
@@ -209,6 +239,11 @@
             const c2 = (sels.c2 === '_new_') ? (els.c2n.value || '(新規)') : (sels.c2 || '-');
             const c3 = (sels.c3 === '_new_') ? (els.c3n.value || '(新規)') : (sels.c3 || '-');
             els.pathDisp.innerHTML = `登録先: <b>${c1} > ${c2} > ${c3}</b>`;
+            
+            // 新規入力がある場合、またはすべて選択されている場合に登録ボタンを表示
+            const hasNew = (sels.c1==='_new_' || sels.c2==='_new_' || sels.c3==='_new_');
+            const hasVal = (c1 && c1 !== '(新規)' && c1 !== '-');
+            els.createCatBtn.style.display = (hasNew && hasVal) ? 'inline-block' : 'none';
         }
         [els.c1n, els.c2n, els.c3n].forEach(el => el.oninput = updatePathDisplay);
 
@@ -239,10 +274,29 @@
                 const catLabel = [f.category_1, f.category_2, f.category_3].filter(c=>c && c!=='未分類' && c!=='-').join(' > ') || '未分類';
                 const div = document.createElement('div'); div.className = 'csv-item';
                 div.innerHTML = `
-                    <div class="csv-header"><span>${f.filename}</span><div class="csv-actions"><button onclick="editCsv(${f.id}, '${f.filename}', '${f.category_1}', '${f.category_2}', '${f.category_3}')" style="background:#ffc107; color:#000; border:none;">編集</button><button onclick="window.location.href='/api/products/files/${f.id}/download'" style="background:#17a2b8; color:white; border:none;">DL</button><button onclick="delCsv(${f.id})" style="background:#dc3545; color:white; border:none;">削除</button></div></div>
+                    <div class="csv-header"><span>${f.filename}</span><div class="csv-actions"><button onclick="openEditModal(${f.id}, '${f.filename}', '${f.category_1}', '${f.category_2}', '${f.category_3}')" style="background:#ffc107; color:#000; border:none;">編集・移動</button><button onclick="window.location.href='/api/products/files/${f.id}/download'" style="background:#17a2b8; color:white; border:none;">DL</button><button onclick="delCsv(${f.id})" style="background:#dc3545; color:white; border:none;">削除</button></div></div>
                     <div class="csv-meta"><span class="csv-tag">📂 ${catLabel}</span><span>📅 ${date}</span></div>`;
                 els.csvList.appendChild(div);
             });
+        }
+
+        // --- カテゴリのみ登録 ---
+        async function createCategoryOnly() {
+            const c1 = sels.c1 === '_new_' ? els.c1n.value : (sels.c1 || '');
+            const c2 = sels.c2 === '_new_' ? els.c2n.value : (sels.c2 || '-');
+            const c3 = sels.c3 === '_new_' ? els.c3n.value : (sels.c3 || '-');
+
+            if (!c1) return alert("大カテゴリは必須です");
+            
+            try {
+                const r = await fetch('/api/categories/create', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ category1: c1, category2: c2, category3: c3 })
+                });
+                const d = await r.json();
+                if(r.ok) { alert(d.message); location.reload(); }
+                else { alert("エラー: " + d.message); }
+            } catch(e) { alert("通信エラー"); }
         }
 
         async function importCsv() {
@@ -274,12 +328,31 @@
             } catch(e) { alert('エラー'); }
         }
 
-        async function editCsv(id, oldName, oldC1, oldC2, oldC3) {
-            const newName = prompt("ファイル名を変更:", oldName);
-            if(newName) {
-                try { await fetch(`/api/products/files/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: newName, category1: oldC1, category2: oldC2, category3: oldC3 }) }); loadCsvList(); } 
-                catch(e) { alert('変更失敗'); }
-            }
+        // --- モーダル制御 ---
+        function openEditModal(id, fname, c1, c2, c3) {
+            els.editId.value = id;
+            els.editFn.value = fname;
+            els.editC1.value = c1;
+            els.editC2.value = c2;
+            els.editC3.value = c3;
+            els.modal.style.display = "block";
+        }
+        function closeModal() { els.modal.style.display = "none"; }
+        window.onclick = (e) => { if(e.target == els.modal) closeModal(); }
+
+        async function saveEdit() {
+            const id = els.editId.value;
+            const body = {
+                filename: els.editFn.value,
+                category1: els.editC1.value,
+                category2: els.editC2.value,
+                category3: els.editC3.value
+            };
+            try {
+                const r = await fetch(`/api/products/files/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                if(r.ok) { closeModal(); loadCsvList(); loadStats(); setTimeout(loadCat1, 500); } // カテゴリ構造が変わる可能性があるため再読み込み
+                else alert('更新失敗');
+            } catch(e) { alert('エラーが発生しました'); }
         }
     </script>
 </body>
