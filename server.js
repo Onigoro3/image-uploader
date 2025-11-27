@@ -203,7 +203,8 @@ app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res)
 app.get('/api/products/stats', isAuthenticated, apiHandler(async (req, res) => {
     const imgCount = (await pool.query('SELECT COUNT(*) FROM images')).rows[0].count;
     const prodCount = (await pool.query('SELECT COUNT(*) FROM product_info')).rows[0].count;
-    const linkedCount = (await pool.query(`SELECT COUNT(DISTINCT i.id) FROM images i JOIN product_info p ON ((p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) OR (p.product_code IS NOT NULL AND p.product_code <> '' AND i.title LIKE '%' || TRIM(p.product_code) || '%') OR (p.model_num1 IS NOT NULL AND p.model_num1 <> '' AND i.title LIKE '%' || TRIM(p.model_num1) || '%'))`)).rows[0].count;
+    // ★修正: 紐づけ判定を「画像ファイル名の一致」のみに限定
+    const linkedCount = (await pool.query(`SELECT COUNT(DISTINCT i.id) FROM images i JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename))`)).rows[0].count;
     res.json({ images: imgCount, products: prodCount, linked: linkedCount });
 }));
 
@@ -214,6 +215,7 @@ app.get('/api/products/all', isAuthenticated, apiHandler(async (req, res) => {
 
 app.get('/api/debug/mismatch', isAuthenticated, apiHandler(async (req, res) => {
     try {
+        // ★修正: 診断ロジックもファイル名一致のみに限定
         const prodRows = await pool.query(`SELECT product_name, image_filename, product_code, model_num1 FROM product_info p WHERE p.image_filename IS NOT NULL AND p.image_filename <> '' AND NOT EXISTS (SELECT 1 FROM images i WHERE i.title LIKE '%' || p.image_filename) LIMIT 5`);
         const imgRows = await pool.query(`SELECT title FROM images i WHERE NOT EXISTS (SELECT 1 FROM product_info p WHERE p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || p.image_filename) ORDER BY created_at DESC LIMIT 5`);
         res.json({ unlinkedProducts: prodRows.rows, unlinkedImages: imgRows.rows });
@@ -258,7 +260,6 @@ app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiH
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }));
 
-// ★修正: カテゴリ定義用ダミーファイル（__CATEGORY_NODE__）を除外してリストを返す
 app.get('/api/products/files', isAuthenticated, apiHandler(async (req, res) => {
     try { 
         const { rows } = await pool.query("SELECT * FROM csv_uploads WHERE filename <> '__CATEGORY_NODE__' ORDER BY uploaded_at DESC"); 
@@ -266,12 +267,9 @@ app.get('/api/products/files', isAuthenticated, apiHandler(async (req, res) => {
     } catch (e) { res.json([]); }
 }));
 
-// ★追加: カテゴリのみ登録（ダミーCSVレコードを作成）
 app.post('/api/categories/create', isAuthenticated, apiHandler(async (req, res) => {
     const { category1, category2, category3 } = req.body;
     if (!category1) return res.status(400).json({ message: '大カテゴリは必須です' });
-    
-    // ダミーレコードを挿入してカテゴリの存在をDBに記録する
     await pool.query(
         "INSERT INTO csv_uploads (filename, category_1, category_2, category_3) VALUES ($1, $2, $3, $4)",
         ['__CATEGORY_NODE__', category1, category2 || '-', category3 || '-']
@@ -296,11 +294,15 @@ app.get('/api/products/files/:id/download', isAuthenticated, apiHandler(async (r
 }));
 
 // --- その他API ---
+// ★修正: 検索APIのLEFT JOINを「画像ファイル名の一致」のみに限定
 app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     const { cat1, cat2, cat3, folder, q, sort, order } = req.query;
     if (!q && (!cat1 || !cat2 || !cat3 || !folder)) return res.status(400).json({message: 'カテゴリを選択するか、検索ワードを入力してください'});
     const s = sort === 'title' ? 'i.title' : 'i.created_at'; const d = order === 'ASC' ? 'ASC' : 'DESC';
-    let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON ((p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) OR (p.product_code IS NOT NULL AND p.product_code <> '' AND i.title LIKE '%' || TRIM(p.product_code) || '%') OR (p.model_num1 IS NOT NULL AND p.model_num1 <> '' AND i.title LIKE '%' || TRIM(p.model_num1) || '%')) WHERE 1=1`;
+    
+    // LEFT JOIN の条件をCSV出力時と同じ厳密な条件（image_filenameの一致のみ）に変更
+    let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) WHERE 1=1`;
+    
     let params = []; let pIdx = 1;
     if (cat1) { sql += ` AND i.category_1=$${pIdx++}`; params.push(cat1); }
     if (cat2) { sql += ` AND i.category_2=$${pIdx++}`; params.push(cat2); }
@@ -309,6 +311,7 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     if (q) { 
         const keywords = q.replace(/　/g, ' ').trim().split(/\s+/); 
         keywords.forEach(word => { 
+            // 検索キーワード自体は、商品名や型番でもヒットするように維持
             sql += ` AND (i.title ILIKE $${pIdx} OR p.product_name ILIKE $${pIdx} OR p.model_num1 ILIKE $${pIdx} OR p.model_num2 ILIKE $${pIdx} OR p.model_num3 ILIKE $${pIdx} OR p.model_num4 ILIKE $${pIdx} OR p.product_code ILIKE $${pIdx})`; 
             params.push(`%${word}%`); 
             pIdx++; 
