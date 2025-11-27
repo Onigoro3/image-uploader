@@ -194,7 +194,6 @@
             els.sort.onchange = els.order.onchange = () => loadImages(sels.f, els.search.value);
         }
 
-        // ★修正: type=image を指定して、画像カテゴリのみ取得
         const loadCat1 = () => { resetUI(1); loadList('/api/cat1?type=image', 'cat1-container', '大カテゴリ', (v) => { sels.c1=v; els.c1.value=v; checkNew(els.c1, els.c1n); loadCat2(v); }); loadOpts('/api/cat1?type=image', els.c1); };
         const loadCat2 = (c1) => { resetUI(2); loadList(`/api/cat2/${c1}?type=image`, 'cat2-container', '中カテゴリ', (v) => { sels.c2=v; els.c2.value=v; checkNew(els.c2, els.c2n); loadCat3(c1,v); }); loadOpts(`/api/cat2/${c1}?type=image`, els.c2); };
         const loadCat3 = (c1,c2) => { resetUI(3); loadList(`/api/cat3/${c1}/${c2}?type=image`, 'cat3-container', '小カテゴリ', (v) => { sels.c3=v; els.c3.value=v; checkNew(els.c3, els.c3n); loadFolder(c1,c2,v); }); loadOpts(`/api/cat3/${c1}/${c2}?type=image`, els.c3); };
@@ -210,7 +209,7 @@
                     e.innerHTML = `<span>${v}</span>`;
                     if(canDelete) {
                         const btn = document.createElement('div'); btn.className = 'action-buttons';
-                        btn.innerHTML = '<button>x</button>';
+                        btn.innerHTML = '<button>x<\/button>'; // 修正: タグエスケープ
                         btn.onclick = (ev) => { ev.stopPropagation(); deleteFolder(v); };
                         e.appendChild(btn);
                     }
@@ -222,11 +221,11 @@
 
         async function loadImages(f, q='') {
             if(!f && !q) return;
-            els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center; color:#666;">読み込み中...</p>';
+            els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center; color:#666;">読み込み中...<\/p>'; // 修正: タグエスケープ
             const p = new URLSearchParams({ cat1: sels.c1||'', cat2: sels.c2||'', cat3: sels.c3||'', folder: f||'', q: q, sort: els.sort.value, order: els.order.value });
             try {
                 const r = await fetch(`/api/search?${p}`); const d = await r.json();
-                els.gal.innerHTML = d.length ? '' : '<p style="grid-column:span 4; text-align:center; color:#888;">該当なし</p>';
+                els.gal.innerHTML = d.length ? '' : '<p style="grid-column:span 4; text-align:center; color:#888;">該当なし<\/p>'; // 修正
                 d.forEach(img => {
                     const div = document.createElement('div'); div.className = 'image-item';
                     const name = img.title.split('/').pop();
@@ -234,21 +233,22 @@
                     if(img.product_name) {
                         const stockText = (img.stock > 0) ? `在庫:${img.stock}` : `在庫切`;
                         const stockClass = (img.stock > 0) ? 'stock-ok' : 'stock-ng';
-                        infoHtml = `<div class="product-info"><div class="p-name" title="${img.product_name}">${img.product_name}</div><div class="p-model">${img.model_num1 || '-'} ${img.model_num2 || ''}</div><div class="p-stats"><span class="${stockClass}">${stockText}</span><div class="p-prices"><div>EC:<span class="price-val">¥${img.ec_price ? img.ec_price.toLocaleString() : '-'}</span></div><div>メル:¥${img.mercari_price ? img.mercari_price.toLocaleString() : '-'}</div></div></div></div>`;
-                        captionHtml = `<div style='text-align:center;'><b style='font-size:1.2em;color:#fff;'>${img.product_name}</b><br><span style='font-size:0.9em;color:#ccc;'>${img.model_num1||''} ${img.model_num2||''}</span><br><span style='color:${img.stock>0?'#4ade80':'#f87171'};font-weight:bold;'>${stockText}</span><br>EC: ¥${img.ec_price} / メル: ¥${img.mercari_price}</div>`;
+                        // 修正: 閉じタグをエスケープ (<\/div>, <\/span>など)
+                        infoHtml = `<div class="product-info"><div class="p-name" title="${img.product_name}">${img.product_name}<\/div><div class="p-model">${img.model_num1 || '-'} ${img.model_num2 || ''}<\/div><div class="p-stats"><span class="${stockClass}">${stockText}<\/span><div class="p-prices"><div>EC:<span class="price-val">¥${img.ec_price ? img.ec_price.toLocaleString() : '-'}<\/span><\/div><div>メル:¥${img.mercari_price ? img.mercari_price.toLocaleString() : '-'}<\/div><\/div><\/div><\/div>`;
+                        captionHtml = `<div style='text-align:center;'><b style='font-size:1.2em;color:#fff;'>${img.product_name}<\/b><br><span style='font-size:0.9em;color:#ccc;'>${img.model_num1||''} ${img.model_num2||''}<\/span><br><span style='color:${img.stock>0?'#4ade80':'#f87171'};font-weight:bold;'>${stockText}<\/span><br>EC: ¥${img.ec_price} / メル: ¥${img.mercari_price}<\/div>`;
                     } else {
-                        infoHtml = `<div class="product-info" style="color:#999;"><div class="p-name" style="font-weight:normal;">${name}</div><div style="margin-top:auto; font-size:0.8em;">情報なし</div></div>`;
+                        infoHtml = `<div class="product-info" style="color:#999;"><div class="p-name" style="font-weight:normal;">${name}<\/div><div style="margin-top:auto; font-size:0.8em;">情報なし<\/div><\/div>`;
                         captionHtml = `${name}`;
                     }
                     const safeCaption = captionHtml.replace(/"/g, '&quot;');
-                    let mediaHtml = img.url.toLowerCase().endsWith('.pdf') ? `<div class="img-wrapper"><a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em;">${name}</span></a></div>` : `<div class="img-wrapper"><a href="${img.url}" class="lightbox-link" data-caption="${safeCaption}"><img src="${img.url}" class="gallery-image" alt="${name}"></a></div>`;
+                    let mediaHtml = img.url.toLowerCase().endsWith('.pdf') ? `<div class="img-wrapper"><a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em;">${name}<\/span><\/a><\/div>` : `<div class="img-wrapper"><a href="${img.url}" class="lightbox-link" data-caption="${safeCaption}"><img src="${img.url}" class="gallery-image" alt="${name}"><\/a><\/div>`;
                     div.innerHTML = mediaHtml + infoHtml; els.gal.appendChild(div);
                 });
                 if(lightbox) lightbox.destroy();
                 lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link', { captionsData: 'data-caption', captionDelay: 0, captionPosition: 'bottom' });
                 els.csv.style.display = f ? 'inline' : 'none';
                 if(f) els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
-            } catch(e) { els.gal.innerHTML = '<p style="color:red;">エラー</p>'; }
+            } catch(e) { els.gal.innerHTML = '<p style="color:red;">エラー<\/p>'; } // 修正
         }
 
         async function deleteFolder(name) {
@@ -256,8 +256,8 @@
             try { const r=await fetch(`/api/folder/${encodeURIComponent(name)}`,{method:'DELETE'}); if(r.ok){alert('削除しました');loadFolder(sels.c1,sels.c2,sels.c3);} } catch(e){alert('エラー');}
         }
         
-        async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--</option>';j.forEach(v=>s.innerHTML+=`<option value="${v}">${v}</option>`);s.innerHTML+='<option value="_new_">+新</option>';}catch(e){}}
-        function resetUI(l){if(l<=1)document.getElementById('cat2-container').innerHTML='<h4>中カテゴリ</h4>';if(l<=2)document.getElementById('cat3-container').innerHTML='<h4>小カテゴリ</h4>';if(l<=3)document.getElementById('folder-container').innerHTML='<h4>フォルダ</h4>';if(l<=4)els.gal.innerHTML='';}
+        async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--<\/option>';j.forEach(v=>s.innerHTML+=`<option value="${v}">${v}<\/option>`);s.innerHTML+='<option value="_new_">+新<\/option>';}catch(e){}} // 修正
+        function resetUI(l){if(l<=1)document.getElementById('cat2-container').innerHTML='<h4>中カテゴリ<\/h4>';if(l<=2)document.getElementById('cat3-container').innerHTML='<h4>小カテゴリ<\/h4>';if(l<=3)document.getElementById('folder-container').innerHTML='<h4>フォルダ<\/h4>';if(l<=4)els.gal.innerHTML='';} // 修正
         function setupDropZone(){els.drop.ondragover=e=>{e.preventDefault();els.drop.classList.add('drag-over');};els.drop.ondragleave=()=>els.drop.classList.remove('drag-over');els.drop.ondrop=e=>{e.preventDefault();els.drop.classList.remove('drag-over');els.file.files=e.dataTransfer.files;els.info.innerText=els.file.files.length+' Files';};els.file.onchange=()=>els.info.innerText=els.file.files.length+' Files';}
         function setupSelects(){const h=(s,i,l)=>{checkNew(s,i);if(s.value!=='_new_'){if(l===1)loadCat2(s.value);if(l===2)loadCat3(sels.c1,s.value);}};els.c1.onchange=()=>h(els.c1,els.c1n,1);els.c2.onchange=()=>h(els.c2,els.c2n,2);els.c3.onchange=()=>checkNew(els.c3,els.c3n);}
         function checkNew(s,i){i.style.display=s.value==='_new_'?'block':'none';}
