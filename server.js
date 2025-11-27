@@ -123,6 +123,10 @@ const createTable = async () => {
             await addCol('product_info', 'product_name', 'VARCHAR(1024)');
             await addCol('product_info', 'model_num1', 'VARCHAR(255)');
             await addCol('product_info', 'model_num2', 'VARCHAR(255)');
+            // ★追加: 型番3, 型番4
+            await addCol('product_info', 'model_num3', 'VARCHAR(255)');
+            await addCol('product_info', 'model_num4', 'VARCHAR(255)');
+            
             await addCol('product_info', 'condition', 'VARCHAR(255)');
             await addCol('product_info', 'series', 'VARCHAR(255)');
             await addCol('product_info', 'stock', 'INTEGER DEFAULT 0');
@@ -221,20 +225,23 @@ app.get('/api/debug/mismatch', isAuthenticated, apiHandler(async (req, res) => {
     } catch(e) { res.status(500).json({message: 'Error: ' + e.message}); }
 }));
 
+// ★修正: テンプレートに型番3, 4追加
 app.get('/api/products/template', isAuthenticated, (req, res) => {
-    const header = "商品名,型番1,型番2,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名\n";
-    const example = "テストカード,DM-01,,A,基本セット,10,100,300,CODE001,DM-01.jpg\n";
+    const header = "商品名,型番1,型番2,型番3,型番4,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名\n";
+    const example = "テストカード,DM-01,,,A,基本セット,10,100,300,CODE001,DM-01.jpg\n";
     res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="template.csv"'); res.send('\uFEFF' + header + example);
 });
 
 // --- CSVインポート ---
+// ★修正: 型番3, 4の読み込みと保存
 app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'CSVファイルがありません' });
     const { category1, category2, category3 } = req.body;
     const c1 = category1 || '未分類'; const c2 = category2 || '-'; const c3 = category3 || '-';
 
     const csvData = req.file.buffer.toString('utf-8').replace(/^\uFEFF/, '');
-    const records = parse(csvData, { columns: ['product_name','model_num1','model_num2','condition','series','stock','ec_price','mercari_price','product_code','image_filename'], from_line: 2, skip_empty_lines: true, trim: true });
+    const records = parse(csvData, { columns: ['product_name','model_num1','model_num2','model_num3','model_num4','condition','series','stock','ec_price','mercari_price','product_code','image_filename'], from_line: 2, skip_empty_lines: true, trim: true });
+    
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -242,9 +249,18 @@ app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiH
         const uploadId = fileRes.rows[0].id;
         for (const row of records) {
             if (!row.product_code) continue;
-            const query = `INSERT INTO product_info (product_name, model_num1, model_num2, condition, series, stock, ec_price, mercari_price, product_code, image_filename, csv_upload_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP) ON CONFLICT (product_code) DO UPDATE SET product_name=EXCLUDED.product_name, model_num1=EXCLUDED.model_num1, model_num2=EXCLUDED.model_num2, condition=EXCLUDED.condition, series=EXCLUDED.series, stock=EXCLUDED.stock, ec_price=EXCLUDED.ec_price, mercari_price=EXCLUDED.mercari_price, image_filename=EXCLUDED.image_filename, csv_upload_id=EXCLUDED.csv_upload_id, updated_at=CURRENT_TIMESTAMP`;
+            // INSERT/UPDATE文に model_num3, 4 を追加
+            const query = `INSERT INTO product_info (product_name, model_num1, model_num2, model_num3, model_num4, condition, series, stock, ec_price, mercari_price, product_code, image_filename, csv_upload_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP) ON CONFLICT (product_code) DO UPDATE SET product_name=EXCLUDED.product_name, model_num1=EXCLUDED.model_num1, model_num2=EXCLUDED.model_num2, model_num3=EXCLUDED.model_num3, model_num4=EXCLUDED.model_num4, condition=EXCLUDED.condition, series=EXCLUDED.series, stock=EXCLUDED.stock, ec_price=EXCLUDED.ec_price, mercari_price=EXCLUDED.mercari_price, image_filename=EXCLUDED.image_filename, csv_upload_id=EXCLUDED.csv_upload_id, updated_at=CURRENT_TIMESTAMP`;
+            
             const stock = parseInt(row.stock || '0'); const ec = parseInt(row.ec_price || '0'); const mer = parseInt(row.mercari_price || '0');
-            await client.query(query, [row.product_name, row.model_num1, row.model_num2 || null, row.condition, row.series, stock, ec, mer, row.product_code, row.image_filename, uploadId]);
+            await client.query(query, [
+                row.product_name, 
+                row.model_num1, 
+                row.model_num2 || null, 
+                row.model_num3 || null, 
+                row.model_num4 || null, 
+                row.condition, row.series, stock, ec, mer, row.product_code, row.image_filename, uploadId
+            ]);
         }
         await client.query('COMMIT'); res.json({ message: `${req.file.originalname} を登録しました (${records.length}件)` });
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
@@ -261,25 +277,41 @@ app.put('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) 
 }));
 
 app.delete('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) => { const client = await pool.connect(); try { await client.query('BEGIN'); await client.query('DELETE FROM product_info WHERE csv_upload_id = $1', [req.params.id]); await client.query('DELETE FROM csv_uploads WHERE id = $1', [req.params.id]); await client.query('COMMIT'); res.json({ message: '削除しました' }); } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
-app.get('/api/products/files/:id/download', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query(`SELECT product_name, model_num1, model_num2, condition, series, stock, ec_price, mercari_price, product_code, image_filename FROM product_info WHERE csv_upload_id = $1 ORDER BY product_code`, [req.params.id]); if (rows.length === 0) return res.status(404).send('Data not found'); let csv = "商品名,型番1,型番2,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名\n"; rows.forEach(r => { csv += `"${r.product_name}","${r.model_num1}","${r.model_num2||''}","${r.condition}","${r.series}",${r.stock},${r.ec_price},${r.mercari_price},"${r.product_code}","${r.image_filename}"\n`; }); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="backup_${req.params.id}.csv"`); res.status(200).send('\uFEFF' + csv); }));
+
+// ★修正: CSVダウンロードに型番3, 4追加
+app.get('/api/products/files/:id/download', isAuthenticated, apiHandler(async (req, res) => { 
+    const { rows } = await pool.query(`SELECT product_name, model_num1, model_num2, model_num3, model_num4, condition, series, stock, ec_price, mercari_price, product_code, image_filename FROM product_info WHERE csv_upload_id = $1 ORDER BY product_code`, [req.params.id]); 
+    if (rows.length === 0) return res.status(404).send('Data not found'); 
+    let csv = "商品名,型番1,型番2,型番3,型番4,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名\n"; 
+    rows.forEach(r => { csv += `"${r.product_name}","${r.model_num1}","${r.model_num2||''}","${r.model_num3||''}","${r.model_num4||''}","${r.condition}","${r.series}",${r.stock},${r.ec_price},${r.mercari_price},"${r.product_code}","${r.image_filename}"\n`; }); 
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="backup_${req.params.id}.csv"`); res.status(200).send('\uFEFF' + csv); 
+}));
 
 // --- その他API ---
+// ★修正: 検索機能に型番3, 4追加
 app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     const { cat1, cat2, cat3, folder, q, sort, order } = req.query;
     if (!q && (!cat1 || !cat2 || !cat3 || !folder)) return res.status(400).json({message: 'カテゴリを選択するか、検索ワードを入力してください'});
     const s = sort === 'title' ? 'i.title' : 'i.created_at'; const d = order === 'ASC' ? 'ASC' : 'DESC';
-    let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON ((p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) OR (p.product_code IS NOT NULL AND p.product_code <> '' AND i.title LIKE '%' || TRIM(p.product_code) || '%') OR (p.model_num1 IS NOT NULL AND p.model_num1 <> '' AND i.title LIKE '%' || TRIM(p.model_num1) || '%')) WHERE 1=1`;
+    let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON ((p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) OR (p.product_code IS NOT NULL AND p.product_code <> '' AND i.title LIKE '%' || TRIM(p.product_code) || '%') OR (p.model_num1 IS NOT NULL AND p.model_num1 <> '' AND i.title LIKE '%' || TRIM(p.model_num1) || '%')) WHERE 1=1`;
     let params = []; let pIdx = 1;
     if (cat1) { sql += ` AND i.category_1=$${pIdx++}`; params.push(cat1); }
     if (cat2) { sql += ` AND i.category_2=$${pIdx++}`; params.push(cat2); }
     if (cat3) { sql += ` AND i.category_3=$${pIdx++}`; params.push(cat3); }
     if (folder) { sql += ` AND i.folder_name=$${pIdx++}`; params.push(folder); }
-    if (q) { const keywords = q.replace(/　/g, ' ').trim().split(/\s+/); keywords.forEach(word => { sql += ` AND (i.title ILIKE $${pIdx} OR p.product_name ILIKE $${pIdx} OR p.model_num1 ILIKE $${pIdx} OR p.model_num2 ILIKE $${pIdx} OR p.product_code ILIKE $${pIdx})`; params.push(`%${word}%`); pIdx++; }); }
+    if (q) { 
+        const keywords = q.replace(/　/g, ' ').trim().split(/\s+/); 
+        keywords.forEach(word => { 
+            sql += ` AND (i.title ILIKE $${pIdx} OR p.product_name ILIKE $${pIdx} OR p.model_num1 ILIKE $${pIdx} OR p.model_num2 ILIKE $${pIdx} OR p.model_num3 ILIKE $${pIdx} OR p.model_num4 ILIKE $${pIdx} OR p.product_code ILIKE $${pIdx})`; 
+            params.push(`%${word}%`); 
+            pIdx++; 
+        }); 
+    }
     sql += ` ORDER BY ${s} ${d} LIMIT 300`; const { rows } = await pool.query(sql, params); res.json(rows);
 }));
 
 app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), apiHandler(async (req, res) => { const { category1, category2, category3, folderName } = req.body; if (!req.files || req.files.length === 0) return res.status(400).json({ message: 'No files' }); const c1 = category1.trim(); const c2 = category2.trim(); const c3 = category3.trim(); const f = folderName.trim(); const values = [], params = []; let idx = 1; for (const file of req.files) { const name = Buffer.from(file.originalname, 'latin1').toString('utf8'); const key = `${c1}/${c2}/${c3}/${f}/${name}`; await s3Client.send(new PutObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key, Body: file.buffer, ContentType: file.mimetype })); const url = `${process.env.R2_PUBLIC_URL}/${encodeURIComponent(key)}`; values.push(`($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`); params.push(key, url, c1, c2, c3, f); } await pool.query(`INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) VALUES ${values.join(', ')}`, params); res.json({ message: `${req.files.length}件 保存完了` }); }));
-app.get('/download-csv', isAuthenticated, apiHandler(async (req, res) => { const { folder, cat1, cat2, cat3 } = req.query; let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) WHERE i.category_1=$1 AND i.category_2=$2 AND i.category_3=$3 AND i.folder_name=$4 ORDER BY i.title`; const { rows } = await pool.query(sql, [cat1, cat2, cat3, folder]); let csv = "大,中,小,フォルダ,ファイル名,商品名,型番1,型番2,EC価格,メルカリ価格,在庫,URL\n"; rows.forEach(r => { csv += `"${r.category_1}","${r.category_2}","${r.category_3}","${r.folder_name}","${r.title}","${r.product_name||''}","${r.model_num1||''}","${r.model_num2||''}","${r.ec_price||0}","${r.mercari_price||0}","${r.stock||0}","${r.url}"\n`; }); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="list.csv"`); res.status(200).send('\uFEFF' + csv); }));
+app.get('/download-csv', isAuthenticated, apiHandler(async (req, res) => { const { folder, cat1, cat2, cat3 } = req.query; let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) WHERE i.category_1=$1 AND i.category_2=$2 AND i.category_3=$3 AND i.folder_name=$4 ORDER BY i.title`; const { rows } = await pool.query(sql, [cat1, cat2, cat3, folder]); let csv = "大,中,小,フォルダ,ファイル名,商品名,型番1,型番2,型番3,型番4,EC価格,メルカリ価格,在庫,URL\n"; rows.forEach(r => { csv += `"${r.category_1}","${r.category_2}","${r.category_3}","${r.folder_name}","${r.title}","${r.product_name||''}","${r.model_num1||''}","${r.model_num2||''}","${r.model_num3||''}","${r.model_num4||''}","${r.ec_price||0}","${r.mercari_price||0}","${r.stock||0}","${r.url}"\n`; }); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="list.csv"`); res.status(200).send('\uFEFF' + csv); }));
 
 const getList = (col) => apiHandler(async (req, res) => { const { rows } = await pool.query(`SELECT DISTINCT ${col} FROM images ORDER BY ${col}`); res.json(rows.map(r => r[col])); });
 
