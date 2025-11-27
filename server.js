@@ -16,6 +16,8 @@ const { createWorker } = require('tesseract.js');
 const https = require('https');
 const archiver = require('archiver');
 const { parse } = require('csv-parse/sync');
+// ★追加: fetchを使えるようにする
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -31,14 +33,13 @@ const pool = new Pool({
 
 pool.on('error', (err) => console.error('DB Error:', err));
 
-// --- 2. ストレージ & アップロード設定 ---
+// --- 2. ストレージ設定 ---
 const s3Client = new S3Client({ 
     region: 'auto', 
     endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`, 
     credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY } 
 });
 
-// 画像とPDF、CSVを許可
 const upload = multer({ 
     storage: multer.memoryStorage(), 
     fileFilter: (req, f, cb) => { 
@@ -94,32 +95,29 @@ const apiHandler = (fn) => async (req, res, next) => {
     } 
 };
 
-// --- ★不足していた createTable 関数の定義 ---
+// --- DB初期化 ---
 const createTable = async () => {
     try {
         const client = await pool.connect();
         try {
-            // 基本テーブル作成
             await client.query(`CREATE TABLE IF NOT EXISTS images (id SERIAL PRIMARY KEY, title VARCHAR(1024) NOT NULL, url VARCHAR(1024) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(100) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default" PRIMARY KEY, "sess" json NOT NULL, "expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE);`);
             await client.query(`CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`);
-            
             await client.query(`CREATE TABLE IF NOT EXISTS product_info (product_code VARCHAR(255) PRIMARY KEY, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS csv_uploads (id SERIAL PRIMARY KEY, filename VARCHAR(255) NOT NULL, uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
 
-            // カラム追加・修復ヘルパー
             const addCol = async (table, col, type) => {
                 await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='${table}' AND column_name='${col}') THEN ALTER TABLE ${table} ADD COLUMN ${col} ${type}; END IF; END $$;`);
             };
 
-            // imagesテーブル
+            // images
             await addCol('images', 'category_1', 'VARCHAR(100) DEFAULT \'default_cat1\'');
             await addCol('images', 'category_2', 'VARCHAR(100) DEFAULT \'default_cat2\'');
             await addCol('images', 'category_3', 'VARCHAR(100) DEFAULT \'default_cat3\'');
             await addCol('images', 'folder_name', 'VARCHAR(100) DEFAULT \'default_folder\'');
 
-            // product_infoテーブル
+            // product_info
             await addCol('product_info', 'product_name', 'VARCHAR(1024)');
             await addCol('product_info', 'model_num1', 'VARCHAR(255)');
             await addCol('product_info', 'model_num2', 'VARCHAR(255)');
@@ -130,11 +128,11 @@ const createTable = async () => {
             await addCol('product_info', 'mercari_price', 'INTEGER DEFAULT 0');
             await addCol('product_info', 'image_filename', 'VARCHAR(1024)');
             await addCol('product_info', 'csv_upload_id', 'INTEGER');
-            
-            // 古いカラム名の修正
+            await addCol('product_info', 'mercari_product_id', 'VARCHAR(255)');
+
             await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='code') THEN ALTER TABLE product_info RENAME COLUMN code TO product_code; END IF; END $$;`);
 
-            // csv_uploadsテーブル
+            // csv_uploads
             await addCol('csv_uploads', 'category_1', 'VARCHAR(100) DEFAULT \'未分類\'');
             await addCol('csv_uploads', 'category_2', 'VARCHAR(100) DEFAULT \'-\'');
             await addCol('csv_uploads', 'category_3', 'VARCHAR(100) DEFAULT \'-\'');
@@ -164,41 +162,99 @@ app.get('/api/auth/check', (req, res) => { if (req.isAuthenticated()) res.json({
 
 app.post('/api/admin/init-db', isAuthenticated, apiHandler(async (req, res) => { await createTable(); res.json({ message: 'データベース構成を更新しました。' }); }));
 
-// --- カテゴリ取得 (typeパラメータ対応) ---
+// --- カテゴリ ---
 const getCategoryList = (col, level) => apiHandler(async (req, res) => {
-    const type = req.query.type; 
-    let query = "", params = [];
-    let where = "";
+    const type = req.query.type; let query = "", params = []; let where = "";
     if (level === 2) { where = `WHERE category_1 = $1`; params = [req.params.c1]; }
     if (level === 3) { where = `WHERE category_1 = $1 AND category_2 = $2`; params = [req.params.c1, req.params.c2]; }
-
-    if (type === 'image') {
-        query = `SELECT DISTINCT ${col} FROM images ${where} ORDER BY ${col}`;
-    } else if (type === 'csv') {
-        query = `SELECT DISTINCT ${col} FROM csv_uploads ${where} ORDER BY ${col}`;
-    } else {
-        if (level === 1) {
-            query = `SELECT ${col} FROM images UNION SELECT ${col} FROM csv_uploads ORDER BY ${col}`;
-        } else if (level === 2) {
-            query = `SELECT ${col} FROM images WHERE category_1=$1 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$2 ORDER BY ${col}`;
-            params = [req.params.c1, req.params.c1];
-        } else {
-            query = `SELECT ${col} FROM images WHERE category_1=$1 AND category_2=$2 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$3 AND category_2=$4 ORDER BY ${col}`;
-            params = [req.params.c1, req.params.c2, req.params.c1, req.params.c2];
-        }
+    if (type === 'image') query = `SELECT DISTINCT ${col} FROM images ${where} ORDER BY ${col}`;
+    else if (type === 'csv') query = `SELECT DISTINCT ${col} FROM csv_uploads ${where} ORDER BY ${col}`;
+    else {
+        if (level === 1) query = `SELECT ${col} FROM images UNION SELECT ${col} FROM csv_uploads ORDER BY ${col}`;
+        else if (level === 2) { query = `SELECT ${col} FROM images WHERE category_1=$1 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$2 ORDER BY ${col}`; params = [req.params.c1, req.params.c1]; }
+        else { query = `SELECT ${col} FROM images WHERE category_1=$1 AND category_2=$2 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$3 AND category_2=$4 ORDER BY ${col}`; params = [req.params.c1, req.params.c2, req.params.c1, req.params.c2]; }
     }
-    const { rows } = await pool.query(query, params);
-    res.json(rows.map(r => r[col]));
+    const { rows } = await pool.query(query, params); res.json(rows.map(r => r[col]));
 });
-
 app.get('/api/cat1', isAuthenticated, getCategoryList('category_1', 1));
 app.get('/api/cat2/:c1', isAuthenticated, getCategoryList('category_2', 2));
 app.get('/api/cat3/:c1/:c2', isAuthenticated, getCategoryList('category_3', 3));
+app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 ORDER BY folder_name', [req.params.c1, req.params.c2, req.params.c3]); res.json(rows.map(r => r.folder_name)); }));
 
-app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res) => { 
-    const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 ORDER BY folder_name', [req.params.c1, req.params.c2, req.params.c3]); 
-    res.json(rows.map(r => r.folder_name)); 
+// --- ★★★ メルカリ在庫 取り込み機能 (修正) ★★★ ---
+app.post('/api/mercari/pull-stock', isAuthenticated, apiHandler(async (req, res) => {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: 'アクセストークンが必要です' });
+
+    // 1. メルカリShops API (GraphQL) エンドポイント
+    const MERCARI_API_URL = 'https://api.mercari-shops.com/v1/graphql';
+
+    // 2. 商品一覧と在庫を取得するクエリ (一般的な例)
+    // ※ 実際のフィールド名が異なる場合は、ドキュメントを見て修正が必要です
+    const query = `
+        query GetProducts {
+          products(first: 100) {
+            edges {
+              node {
+                id  # メルカリ商品ID
+                variants {
+                  id
+                  inventory {
+                    stockQuantity
+                  }
+                }
+              }
+            }
+          }
+        }
+    `;
+
+    try {
+        // 3. メルカリにリクエスト送信
+        const response = await fetch(MERCARI_API_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ query })
+        });
+
+        const result = await response.json();
+
+        if (result.errors) {
+            console.error('Mercari API Error:', result.errors);
+            return res.status(400).json({ message: 'メルカリAPIエラー', details: result.errors });
+        }
+
+        // 4. データ解析 & DB更新
+        let updateCount = 0;
+        const products = result.data?.products?.edges || [];
+
+        for (const edge of products) {
+            const product = edge.node;
+            const mercariId = product.id;
+            // バリエーションがある場合、とりあえず最初の1つの在庫を採用する簡易実装
+            // (商品IDと1対1で紐付ける前提)
+            const stock = product.variants?.[0]?.inventory?.stockQuantity;
+
+            if (mercariId && stock !== undefined) {
+                const updateRes = await pool.query(
+                    'UPDATE product_info SET stock = $1, updated_at = CURRENT_TIMESTAMP WHERE mercari_product_id = $2',
+                    [stock, mercariId]
+                );
+                if (updateRes.rowCount > 0) updateCount++;
+            }
+        }
+
+        res.json({ message: `在庫同期完了: ${updateCount}件 更新しました`, totalChecked: products.length });
+
+    } catch (e) {
+        console.error("Mercari Sync Error:", e);
+        res.status(500).json({ message: '同期処理中にエラーが発生しました: ' + e.message });
+    }
 }));
+// --- ▲ メルカリ連携ここまで ▲ ---
 
 // --- 商品管理 ---
 app.get('/api/products/stats', isAuthenticated, apiHandler(async (req, res) => {
@@ -222,19 +278,17 @@ app.get('/api/debug/mismatch', isAuthenticated, apiHandler(async (req, res) => {
 }));
 
 app.get('/api/products/template', isAuthenticated, (req, res) => {
-    const header = "商品名,型番1,型番2,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名\n";
-    const example = "テストカード,DM-01,,A,基本セット,10,100,300,CODE001,DM-01.jpg\n";
+    const header = "商品名,型番1,型番2,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名,メルカリ商品ID\n";
+    const example = "テストカード,DM-01,,A,基本セット,10,100,300,CODE001,DM-01.jpg,mShopsID_12345\n";
     res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="template.csv"'); res.send('\uFEFF' + header + example);
 });
 
-// --- CSVインポート ---
 app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'CSVファイルがありません' });
     const { category1, category2, category3 } = req.body;
     const c1 = category1 || '未分類'; const c2 = category2 || '-'; const c3 = category3 || '-';
-
     const csvData = req.file.buffer.toString('utf-8').replace(/^\uFEFF/, '');
-    const records = parse(csvData, { columns: ['product_name','model_num1','model_num2','condition','series','stock','ec_price','mercari_price','product_code','image_filename'], from_line: 2, skip_empty_lines: true, trim: true });
+    const records = parse(csvData, { columns: ['product_name','model_num1','model_num2','condition','series','stock','ec_price','mercari_price','product_code','image_filename','mercari_product_id'], from_line: 2, skip_empty_lines: true, trim: true });
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -242,9 +296,9 @@ app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiH
         const uploadId = fileRes.rows[0].id;
         for (const row of records) {
             if (!row.product_code) continue;
-            const query = `INSERT INTO product_info (product_name, model_num1, model_num2, condition, series, stock, ec_price, mercari_price, product_code, image_filename, csv_upload_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP) ON CONFLICT (product_code) DO UPDATE SET product_name=EXCLUDED.product_name, model_num1=EXCLUDED.model_num1, model_num2=EXCLUDED.model_num2, condition=EXCLUDED.condition, series=EXCLUDED.series, stock=EXCLUDED.stock, ec_price=EXCLUDED.ec_price, mercari_price=EXCLUDED.mercari_price, image_filename=EXCLUDED.image_filename, csv_upload_id=EXCLUDED.csv_upload_id, updated_at=CURRENT_TIMESTAMP`;
+            const query = `INSERT INTO product_info (product_name, model_num1, model_num2, condition, series, stock, ec_price, mercari_price, product_code, image_filename, csv_upload_id, mercari_product_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP) ON CONFLICT (product_code) DO UPDATE SET product_name=EXCLUDED.product_name, model_num1=EXCLUDED.model_num1, model_num2=EXCLUDED.model_num2, condition=EXCLUDED.condition, series=EXCLUDED.series, stock=EXCLUDED.stock, ec_price=EXCLUDED.ec_price, mercari_price=EXCLUDED.mercari_price, image_filename=EXCLUDED.image_filename, csv_upload_id=EXCLUDED.csv_upload_id, mercari_product_id=EXCLUDED.mercari_product_id, updated_at=CURRENT_TIMESTAMP`;
             const stock = parseInt(row.stock || '0'); const ec = parseInt(row.ec_price || '0'); const mer = parseInt(row.mercari_price || '0');
-            await client.query(query, [row.product_name, row.model_num1, row.model_num2 || null, row.condition, row.series, stock, ec, mer, row.product_code, row.image_filename, uploadId]);
+            await client.query(query, [row.product_name, row.model_num1, row.model_num2 || null, row.condition, row.series, stock, ec, mer, row.product_code, row.image_filename, uploadId, row.mercari_product_id || null]);
         }
         await client.query('COMMIT'); res.json({ message: `${req.file.originalname} を登録しました (${records.length}件)` });
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
@@ -261,7 +315,7 @@ app.put('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) 
 }));
 
 app.delete('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) => { const client = await pool.connect(); try { await client.query('BEGIN'); await client.query('DELETE FROM product_info WHERE csv_upload_id = $1', [req.params.id]); await client.query('DELETE FROM csv_uploads WHERE id = $1', [req.params.id]); await client.query('COMMIT'); res.json({ message: '削除しました' }); } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
-app.get('/api/products/files/:id/download', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query(`SELECT product_name, model_num1, model_num2, condition, series, stock, ec_price, mercari_price, product_code, image_filename FROM product_info WHERE csv_upload_id = $1 ORDER BY product_code`, [req.params.id]); if (rows.length === 0) return res.status(404).send('Data not found'); let csv = "商品名,型番1,型番2,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名\n"; rows.forEach(r => { csv += `"${r.product_name}","${r.model_num1}","${r.model_num2||''}","${r.condition}","${r.series}",${r.stock},${r.ec_price},${r.mercari_price},"${r.product_code}","${r.image_filename}"\n`; }); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="backup_${req.params.id}.csv"`); res.status(200).send('\uFEFF' + csv); }));
+app.get('/api/products/files/:id/download', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query(`SELECT product_name, model_num1, model_num2, condition, series, stock, ec_price, mercari_price, product_code, image_filename, mercari_product_id FROM product_info WHERE csv_upload_id = $1 ORDER BY product_code`, [req.params.id]); if (rows.length === 0) return res.status(404).send('Data not found'); let csv = "商品名,型番1,型番2,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名,メルカリ商品ID\n"; rows.forEach(r => { csv += `"${r.product_name}","${r.model_num1}","${r.model_num2||''}","${r.condition}","${r.series}",${r.stock},${r.ec_price},${r.mercari_price},"${r.product_code}","${r.image_filename}","${r.mercari_product_id||''}"\n`; }); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="backup_${req.params.id}.csv"`); res.status(200).send('\uFEFF' + csv); }));
 
 // --- その他API ---
 app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
@@ -296,8 +350,4 @@ app.delete('/api/personal/album/:name', isAuthenticated, apiHandler(async (req, 
 app.get('/api/personal/download/:folder', isAuthenticated, apiHandler(async (req, res) => { const folder = req.params.folder; const { rows } = await pool.query(`SELECT title FROM images WHERE category_1='Private' AND category_2='Album' AND category_3='Photo' AND folder_name=$1`, [folder]); if (rows.length === 0) return res.status(404).send('Empty'); res.attachment(`${encodeURIComponent(folder)}.zip`); const archive = archiver('zip', { zlib: { level: 9 } }); archive.pipe(res); for (const row of rows) { try { const s3Item = await s3Client.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: row.title })); archive.append(s3Item.Body, { name: row.title.split('/').pop() }); } catch (e) {} } await archive.finalize(); }));
 app.post('/api/analyze/:folder', isAuthenticated, apiHandler(async (req, res) => { res.status(200).send('CSV Dummy'); }));
 
-// サーバー起動
-app.listen(port, async () => { 
-    await createTable(); // 起動時にテーブル作成
-    console.log(`Server running on ${port}`);
-});
+app.listen(port, async () => { await createTable(); console.log(`Server running on ${port}`); });
