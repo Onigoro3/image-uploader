@@ -94,7 +94,7 @@ const apiHandler = (fn) => async (req, res, next) => {
     } 
 };
 
-// --- DB初期化 ---
+// --- DB初期化 (自動修復付き) ---
 const createTable = async () => {
     try {
         const client = await pool.connect();
@@ -103,6 +103,7 @@ const createTable = async () => {
             await client.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(100) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default" PRIMARY KEY, "sess" json NOT NULL, "expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE);`);
             await client.query(`CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`);
+            
             await client.query(`CREATE TABLE IF NOT EXISTS product_info (product_code VARCHAR(255) PRIMARY KEY, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS csv_uploads (id SERIAL PRIMARY KEY, filename VARCHAR(255) NOT NULL, uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
 
@@ -177,40 +178,20 @@ app.get('/api/cat2/:c1', isAuthenticated, getCategoryList('category_2', 2));
 app.get('/api/cat3/:c1/:c2', isAuthenticated, getCategoryList('category_3', 3));
 app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query('SELECT DISTINCT folder_name FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 ORDER BY folder_name', [req.params.c1, req.params.c2, req.params.c3]); res.json(rows.map(r => r.folder_name)); }));
 
-// --- ★★★ メルカリ在庫 取り込み機能 (自動探索版) ★★★ ---
+// --- メルカリ連携 (自動探索) ---
 app.post('/api/mercari/pull-stock', isAuthenticated, apiHandler(async (req, res) => {
     const { token } = req.body;
     if (!token) return res.status(400).json({ message: 'アクセストークンが必要です' });
 
-    // 試すURL候補 (ショップID込み、なし、サンドボックスなど)
+    // 接続候補 (ユーザーID入り、なし、v1、ルート)
     const ENDPOINTS = [
         'https://api.mercari-shops.com/v1/graphql',
         'https://api.mercari-shops.com/graphql',
-        // ショップID込みのパターン (ユーザー提供のIDを使用)
         'https://api.mercari-shops.com/v1/shops/LZTviPdpw7sHE9dYjZZsq6/graphql' 
     ];
+    const query = `query GetProducts { products(first: 50) { edges { node { id variants { id inventory { stockQuantity } } } } } }`;
 
-    const query = `
-        query GetProducts {
-          products(first: 50) {
-            edges {
-              node {
-                id
-                variants {
-                  id
-                  inventory {
-                    stockQuantity
-                  }
-                }
-              }
-            }
-          }
-        }
-    `;
-
-    let lastError = null;
-
-    // 複数のURLを順番に試す
+    let lastError = "";
     for (const url of ENDPOINTS) {
         try {
             console.log(`Trying Mercari API: ${url}`);
@@ -219,46 +200,34 @@ app.post('/api/mercari/pull-stock', isAuthenticated, apiHandler(async (req, res)
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'User-Agent': 'Mozilla/5.0',
                     'Accept': 'application/json'
                 },
                 body: JSON.stringify({ query })
             });
-
+            
             if (response.ok) {
-                // 成功したらデータを処理してループを抜ける
                 const result = await response.json();
                 if (result.errors) throw new Error(JSON.stringify(result.errors));
-
+                
+                // 成功したらDB更新
                 let updateCount = 0;
                 const products = result.data?.products?.edges || [];
-
                 for (const edge of products) {
-                    const product = edge.node;
-                    const mercariId = product.id;
-                    const stock = product.variants?.[0]?.inventory?.stockQuantity;
-                    if (mercariId && stock !== undefined) {
-                        const updateRes = await pool.query('UPDATE product_info SET stock = $1, updated_at = CURRENT_TIMESTAMP WHERE mercari_product_id = $2', [stock, mercariId]);
-                        if (updateRes.rowCount > 0) updateCount++;
+                    const p = edge.node;
+                    const stock = p.variants?.[0]?.inventory?.stockQuantity;
+                    if (p.id && stock !== undefined) {
+                        const r = await pool.query('UPDATE product_info SET stock=$1, updated_at=CURRENT_TIMESTAMP WHERE mercari_product_id=$2', [stock, p.id]);
+                        if(r.rowCount>0) updateCount++;
                     }
                 }
-                return res.json({ message: `在庫同期完了: ${updateCount}件 更新しました`, totalChecked: products.length });
-            } else {
-                // 失敗したら次のURLへ
-                const text = await response.text();
-                lastError = `Status: ${response.status}, Msg: ${text.substring(0, 100)}`;
-                console.warn(`Failed ${url}: ${lastError}`);
+                return res.json({ message: `成功: ${updateCount}件 更新`, totalChecked: products.length });
             }
-        } catch (e) {
-            lastError = e.message;
-            console.warn(`Error ${url}: ${e.message}`);
-        }
+            lastError = `Status ${response.status}`;
+        } catch (e) { lastError = e.message; }
     }
-
-    // 全滅した場合
-    res.status(500).json({ message: '全ての接続先で失敗しました', details: lastError });
+    res.status(500).json({ message: '全ての接続先で失敗', details: lastError });
 }));
-// --- ▲ メルカリ連携ここまで ▲ ---
 
 // --- 商品管理 ---
 app.get('/api/products/stats', isAuthenticated, apiHandler(async (req, res) => {
@@ -267,11 +236,7 @@ app.get('/api/products/stats', isAuthenticated, apiHandler(async (req, res) => {
     const linkedCount = (await pool.query(`SELECT COUNT(DISTINCT i.id) FROM images i JOIN product_info p ON ((p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) OR (p.product_code IS NOT NULL AND p.product_code <> '' AND i.title LIKE '%' || TRIM(p.product_code) || '%') OR (p.model_num1 IS NOT NULL AND p.model_num1 <> '' AND i.title LIKE '%' || TRIM(p.model_num1) || '%'))`)).rows[0].count;
     res.json({ images: imgCount, products: prodCount, linked: linkedCount });
 }));
-
-app.get('/api/products/all', isAuthenticated, apiHandler(async (req, res) => {
-    const { rows } = await pool.query('SELECT * FROM product_info ORDER BY updated_at DESC LIMIT 500');
-    res.json(rows);
-}));
+app.get('/api/products/all', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query('SELECT * FROM product_info ORDER BY updated_at DESC LIMIT 500'); res.json(rows); }));
 
 app.get('/api/debug/mismatch', isAuthenticated, apiHandler(async (req, res) => {
     try {
@@ -280,13 +245,11 @@ app.get('/api/debug/mismatch', isAuthenticated, apiHandler(async (req, res) => {
         res.json({ unlinkedProducts: prodRows.rows, unlinkedImages: imgRows.rows });
     } catch(e) { res.status(500).json({message: 'Error: ' + e.message}); }
 }));
-
 app.get('/api/products/template', isAuthenticated, (req, res) => {
     const header = "商品名,型番1,型番2,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名,メルカリ商品ID\n";
     const example = "テストカード,DM-01,,A,基本セット,10,100,300,CODE001,DM-01.jpg,mShopsID_12345\n";
     res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="template.csv"'); res.send('\uFEFF' + header + example);
 });
-
 app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'CSVファイルがありません' });
     const { category1, category2, category3 } = req.body;
@@ -307,17 +270,8 @@ app.post('/api/products/import', isAuthenticated, upload.single('csvFile'), apiH
         await client.query('COMMIT'); res.json({ message: `${req.file.originalname} を登録しました (${records.length}件)` });
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }));
-
-app.get('/api/products/files', isAuthenticated, apiHandler(async (req, res) => {
-    try { const { rows } = await pool.query('SELECT * FROM csv_uploads ORDER BY uploaded_at DESC'); res.json(rows); } catch (e) { res.json([]); }
-}));
-
-app.put('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) => {
-    const { filename, category1, category2, category3 } = req.body;
-    await pool.query('UPDATE csv_uploads SET filename = $1, category_1 = $2, category_2 = $3, category_3 = $4 WHERE id = $5', [filename, category1, category2, category3, req.params.id]);
-    res.json({ message: '変更しました' });
-}));
-
+app.get('/api/products/files', isAuthenticated, apiHandler(async (req, res) => { try { const { rows } = await pool.query('SELECT * FROM csv_uploads ORDER BY uploaded_at DESC'); res.json(rows); } catch (e) { res.json([]); } }));
+app.put('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) => { const { filename, category1, category2, category3 } = req.body; await pool.query('UPDATE csv_uploads SET filename = $1, category_1 = $2, category_2 = $3, category_3 = $4 WHERE id = $5', [filename, category1, category2, category3, req.params.id]); res.json({ message: '変更しました' }); }));
 app.delete('/api/products/files/:id', isAuthenticated, apiHandler(async (req, res) => { const client = await pool.connect(); try { await client.query('BEGIN'); await client.query('DELETE FROM product_info WHERE csv_upload_id = $1', [req.params.id]); await client.query('DELETE FROM csv_uploads WHERE id = $1', [req.params.id]); await client.query('COMMIT'); res.json({ message: '削除しました' }); } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
 app.get('/api/products/files/:id/download', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query(`SELECT product_name, model_num1, model_num2, condition, series, stock, ec_price, mercari_price, product_code, image_filename, mercari_product_id FROM product_info WHERE csv_upload_id = $1 ORDER BY product_code`, [req.params.id]); if (rows.length === 0) return res.status(404).send('Data not found'); let csv = "商品名,型番1,型番2,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名,メルカリ商品ID\n"; rows.forEach(r => { csv += `"${r.product_name}","${r.model_num1}","${r.model_num2||''}","${r.condition}","${r.series}",${r.stock},${r.ec_price},${r.mercari_price},"${r.product_code}","${r.image_filename}","${r.mercari_product_id||''}"\n`; }); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="backup_${req.params.id}.csv"`); res.status(200).send('\uFEFF' + csv); }));
 
@@ -340,7 +294,6 @@ app.post('/upload', isAuthenticated, upload.array('imageFiles', 100), apiHandler
 app.get('/download-csv', isAuthenticated, apiHandler(async (req, res) => { const { folder, cat1, cat2, cat3 } = req.query; let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) WHERE i.category_1=$1 AND i.category_2=$2 AND i.category_3=$3 AND i.folder_name=$4 ORDER BY i.title`; const { rows } = await pool.query(sql, [cat1, cat2, cat3, folder]); let csv = "大,中,小,フォルダ,ファイル名,商品名,型番1,型番2,EC価格,メルカリ価格,在庫,URL\n"; rows.forEach(r => { csv += `"${r.category_1}","${r.category_2}","${r.category_3}","${r.folder_name}","${r.title}","${r.product_name||''}","${r.model_num1||''}","${r.model_num2||''}","${r.ec_price||0}","${r.mercari_price||0}","${r.stock||0}","${r.url}"\n`; }); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="list.csv"`); res.status(200).send('\uFEFF' + csv); }));
 
 const getList = (col) => apiHandler(async (req, res) => { const { rows } = await pool.query(`SELECT DISTINCT ${col} FROM images ORDER BY ${col}`); res.json(rows.map(r => r[col])); });
-
 app.put('/api/image/:title', isAuthenticated, apiHandler(async (req, res) => { const { title } = req.params; const { category1, category2, category3, folderName } = req.body; const name = title.split('/').pop(); const newKey = `${category1}/${category2}/${category3}/${folderName}/${name}`; await s3Client.send(new CopyObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, CopySource: `${process.env.R2_BUCKET_NAME}/${title}`, Key: newKey })); await s3Client.send(new S3DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: title })); await pool.query(`UPDATE images SET category_1=$1, category_2=$2, category_3=$3, folder_name=$4, title=$5, url=$6 WHERE title=$7`, [category1, category2, category3, folderName, newKey, `${process.env.R2_PUBLIC_URL}/${encodeURIComponent(newKey)}`, title]); res.json({ message: "移動完了" }); }));
 app.delete('/api/folder/:name', isAuthenticated, apiHandler(async(req,res) => {const {rows}=await pool.query(`SELECT title FROM images WHERE folder_name=$1`,[req.params.name]); if(rows.length>0){ const keys=rows.map(r=>({Key:r.title})); for(let i=0;i<keys.length;i+=1000)await s3Client.send(new DeleteObjectsCommand({Bucket:process.env.R2_BUCKET_NAME,Delete:{Objects:keys.slice(i,i+1000)}})); } await pool.query(`DELETE FROM images WHERE folder_name=$1`,[req.params.name]); res.json({message:"削除完了"}); }));
 app.put('/api/cat1/:old', isAuthenticated, apiHandler(async(req, res) => { await pool.query('UPDATE images SET category_1=$1 WHERE category_1=$2', [req.body.newName, req.params.old]); res.json({message:'OK'}); }));

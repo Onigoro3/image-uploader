@@ -172,7 +172,7 @@
             }
         };
 
-        // --- カテゴリ読み込み (CSV用) ---
+        // ★修正: type=csv 指定
         const loadCat1 = () => { resetUI(1); loadList('/api/cat1?type=csv', 'cat1-container', '大カテゴリ', (v) => { sels.c1 = v; handleSelect(1, v); if(v !== '_new_') loadCat2(v); }); };
         const loadCat2 = (c1) => { resetUI(2); loadList(`/api/cat2/${c1}?type=csv`, 'cat2-container', '中カテゴリ', (v) => { sels.c2 = v; handleSelect(2, v); if(v !== '_new_') loadCat3(c1, v); }); };
         const loadCat3 = (c1, c2) => { resetUI(3); loadList(`/api/cat3/${c1}/${c2}?type=csv`, 'cat3-container', '小カテゴリ', (v) => { sels.c3 = v; handleSelect(3, v); }); };

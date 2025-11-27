@@ -2,362 +2,346 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>画像アップローダー</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" />
+    <title>画像アップローダー (全機能)</title>
     <style>
-        body { font-family: "Helvetica Neue", Arial, sans-serif; line-height: 1.6; padding: 10px; margin: 0; background-color: #f4f6f9; color: #333; }
-        
-        /* --- ヘッダー --- */
-        #auth-status { 
-            position: fixed; top: 0; left: 0; width: 100%; background: #fff; padding: 10px 20px; 
-            border-bottom: 1px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.05); z-index: 1000; 
-            display: flex; justify-content: flex-end; align-items: center; box-sizing: border-box;
+        #auth-status {
+            position: fixed; top: 10px; right: 20px; background: #fff; padding: 5px 10px; border-radius: 5px; border: 1px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.1); z-index: 100;
         }
-        #username-display { margin-right: 15px; font-weight: bold; color: #555; font-size: 0.9rem; }
-        #auth-status button { 
-            background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; 
-            cursor: pointer; margin-left: 8px; font-size: 0.85rem; transition: background 0.2s;
-        }
-        #auth-status button:hover { opacity: 0.9; }
-        #personal-btn { background: #17a2b8 !important; }
-        #fix-db-btn { background: #ffc107 !important; color: #333 !important; }
-        
-        #main-content { margin-top: 70px; max-width: 1200px; margin-left: auto; margin-right: auto; }
-        hr { margin: 2em 0; border: 0; border-top: 1px solid #e0e0e0; }
-        
-        /* --- 入力フォーム --- */
-        input[type="text"], input[type="search"], select { 
-            padding: 10px; border: 1px solid #ccc; border-radius: 5px; 
-            width: 100%; box-sizing: border-box; margin-bottom: 10px; font-size: 16px;
-        }
-        button { padding: 10px 20px; cursor: pointer; border-radius: 5px; font-size: 14px; font-weight: bold; border: none; }
-
-        /* パネルスタイル */
-        .panel { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; }
-        
-        #upload-section { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
-        #upload-section label { font-weight: bold; display: block; margin-bottom: 5px; font-size: 0.9em; color: #555; }
-        #uploadStatus { font-weight: bold; grid-column: span 3; margin-top: 10px; word-break: break-all; }
-        
-        #dropZone { 
-            border: 2px dashed #cbd5e0; padding: 30px; text-align: center; background: #f8fafc; 
-            border-radius: 6px; cursor: pointer; transition: all 0.2s; color: #666;
-        }
-        #dropZone:hover, #dropZone.drag-over { background-color: #eef2ff; border-color: #6366f1; color: #4f46e5; }
-
-        /* ギャラリー選択 */
-        #gallery-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-        .gallery-column { border: 1px solid #e2e8f0; padding: 0; border-radius: 6px; background: #fff; height: 250px; overflow-y: auto; }
-        .gallery-column h4 { margin: 0; padding: 8px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; font-size: 0.9em; text-align: center; color: #475569; position: sticky; top: 0; }
-        
-        .gallery-item { 
-            padding: 8px 12px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 14px; 
-            display: flex; justify-content: space-between; align-items: center; transition: background 0.1s;
-        }
-        .gallery-item:hover { background-color: #f8fafc; }
-        .gallery-item.active { background-color: #3b82f6; color: white; }
-        
-        /* --- 商品カードスタイル --- */
-        #search-section { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; }
-        #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
-        
-        .image-item { 
-            border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; overflow: hidden; 
-            position: relative; transition: transform 0.2s, box-shadow 0.2s; 
-            display: flex; flex-direction: column;
-        }
-        .image-item:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
-        
-        .img-wrapper { width: 100%; aspect-ratio: 1/1; background: #f1f5f9; position: relative; }
-        .gallery-image { width: 100%; height: 100%; object-fit: contain; display: block; }
-        .pdf-icon { 
-            width: 100%; height: 100%; display: flex; flex-direction: column; 
-            justify-content: center; align-items: center; background: #fff1f2; color: #e11d48; 
-            font-weight: bold; text-decoration: none; 
-        }
-
-        /* 商品情報詳細 */
-        .product-info { padding: 10px; font-size: 0.85rem; border-top: 1px solid #e2e8f0; flex-grow: 1; display: flex; flex-direction: column; gap: 4px; }
-        .p-name { font-weight: bold; color: #1e293b; line-height: 1.4; margin-bottom: 4px; }
-        .p-model { color: #64748b; font-size: 0.8rem; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; align-self: flex-start; }
-        
-        .p-stats { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 8px; border-top: 1px dashed #e2e8f0; }
-        .p-stock { font-weight: bold; }
-        .stock-ok { color: #059669; } 
-        .stock-ng { color: #dc2626; background: #fee2e2; padding: 0 4px; border-radius: 2px; }
-        
-        .p-prices { text-align: right; font-size: 0.8rem; color: #475569; }
-        .price-val { font-weight: bold; font-size: 1rem; color: #0f172a; }
-
-        /* CSV管理 */
-        #csv-manage-section { background: #f0fdf4; border: 1px solid #bbf7d0; }
-        #csv-file-list { margin-top: 10px; max-height: 150px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 5px; border-radius: 4px; }
-        .csv-item { display: flex; justify-content: space-between; align-items: center; padding: 6px; border-bottom: 1px solid #eee; font-size: 0.85rem; }
-        
-        #db-stats { display: flex; gap: 15px; background: #fff; padding: 10px; border-radius: 6px; border: 1px solid #ddd; margin-top: 10px; align-items: center; }
-        #db-stats span { font-size: 0.9em; color: #666; }
-        #db-stats b { font-size: 1.2em; color: #333; }
-        #check-mismatch-btn { font-size: 0.8em; padding: 4px 8px; background: #64748b; color: white; border: none; border-radius: 4px; }
-
-        /* --- ★修正: Lightboxキャプションの強制表示設定 --- */
-        .sl-wrapper .sl-caption {
-            display: block !important;
-            opacity: 1 !important;
-            background: rgba(0, 0, 0, 0.85) !important;
-            color: #ffffff !important;
-            font-size: 14px !important;
-            line-height: 1.5 !important;
-            padding: 15px !important;
-            bottom: 0 !important;
-            position: fixed !important;
-            width: 100% !important;
-            text-align: center !important;
-            z-index: 999999 !important; /* 最前面に強制 */
-            pointer-events: none; /* キャプションが操作を邪魔しないように */
-        }
-
-        @media (max-width: 768px) {
-            #upload-section, #gallery-section { grid-template-columns: 1fr; }
-            #gallery-section { grid-template-columns: 1fr 1fr; }
-            #image-gallery-container { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-        }
+        #auth-status button { margin-left: 10px; background: #dc3545; color: white; border: none; }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" integrity="sha512-FaAQujRxLMvw+BkmGN3w7u9EdQQr1t0vQoY8KDh09+6SFaWSTe+KrT8oCWg25X91hytm5c5BTmiSGQejkraaZg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 1em 2em; }
+        hr { margin: 2em 0; }
+        input[type="text"], input[type="search"], select { padding: 5px; border: 1px solid #ccc; border-radius: 4px; width: 95%; margin-bottom: 5px; font-size: 14px; }
+        button { padding: 5px 10px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+        #upload-section { background: #f9f9f9; padding: 15px; border-radius: 8px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px 20px; }
+        #upload-section label { font-weight: bold; display: block; margin-bottom: 3px; }
+        #uploadStatus { font-weight: bold; grid-column: span 3; }
+        #csvDownloader { display: inline-block; padding: 8px 12px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+        #gallery-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        .gallery-column { border: 1px solid #eee; padding: 10px; border-radius: 8px; background: #fafafa; min-height: 200px; max-height: 400px; overflow-y: auto; }
+        .gallery-item { padding: 8px; border: 1px solid #ccc; border-radius: 5px; background-color: #f4f4f4; font-weight: bold; margin-bottom: 5px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .gallery-item.active { background-color: #007bff; color: white; border-color: #007bff; }
+        .gallery-item span { flex-grow: 1; margin-right: 5px; font-size: 14px; word-break: break-all; }
+        .action-buttons { display: flex; gap: 3px; flex-shrink: 0; }
+        .analyze-btn, .edit-btn, .delete-btn { border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-weight: bold; line-height: 20px; text-align: center; color: white; font-size: 12px; }
+        .analyze-btn { background: #17a2b8; } .analyze-btn:hover { background: #138496; }
+        .edit-btn { background: #ffc107; } .edit-btn:hover { background: #e0a800; }
+        .delete-btn { background: #dc3545; } .delete-btn:hover { background: #c82333; }
+        #search-section { margin-top: 20px; border-top: 2px solid #eee; padding-top: 10px; padding-bottom: 10px; display: flex; align-items: center; gap: 15px;}
+        #searchInput { width: 300px; padding: 8px; }
+        #sort-controls label { margin-right: 5px; font-weight: bold;}
+        #sort-controls select { width: auto; padding: 6px; }
+        #image-gallery-container { grid-column: span 4; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-top: 10px; padding-top: 10px; border-top: 2px solid #eee; }
+        .image-item { border: 1px solid #ddd; border-radius: 4px; padding: 5px; background: #fff; }
+        .gallery-image { width: 100%; height: 130px; object-fit: cover; display: block; margin-bottom: 0; }
+        .new-input { display: none; margin-top: 5px; }
+        #analyzeStatus { margin-top: 10px; font-weight: bold; color: #17a2b8; }
+        #dropZone { border: 2px dashed #ccc; padding: 20px; text-align: center; margin-top: 10px; transition: background-color 0.2s ease; }
+        #dropZone.drag-over { background-color: #e9ecef; border-color: #007bff; }
+        #fileInfo { margin-top: 10px; font-style: italic; }
     </style>
 </head>
 <body>
+
     <div id="auth-status">
         <span id="username-display">...</span>
-        <button id="fix-db-btn" title="テーブル修復">⚠️DB修復</button>
-        <button id="personal-btn" onclick="location.href='/personal'">個人アルバム</button>
         <button id="logoutButton">ログアウト</button>
     </div>
-
-    <div id="main-content">
-        <div class="panel">
-            <h3>📤 画像アップロード</h3>
-            <div id="upload-section">
-                <div><label>1. 大カテゴリ</label><select id="cat1Select"></select><input type="text" id="cat1NewInput" class="new-input" style="display:none" placeholder="新規"></div>
-                <div><label>2. 中カテゴリ</label><select id="cat2Select"></select><input type="text" id="cat2NewInput" class="new-input" style="display:none" placeholder="新規"></div>
-                <div><label>3. 小カテゴリ</label><select id="cat3Select"></select><input type="text" id="cat3NewInput" class="new-input" style="display:none" placeholder="新規"></div>
-                <div><label>4. フォルダ名</label><input type="text" id="folderInput" value="default_folder"></div>
-                <div style="grid-column: span 2;">
-                    <label>5. ファイル選択</label>
-                    <div id="dropZone" onclick="document.getElementById('imageInput').click()">
-                        📂 クリックしてファイルを選択<br>
-                        <span style="font-size:0.85em;">(画像 / PDF)</span>
-                        <input type="file" id="imageInput" accept="image/*,.pdf" multiple style="display: none;">
-                        <div id="fileInfo" style="margin-top:5px; font-weight:bold; color:#3b82f6;">未選択</div>
-                    </div>
-                    <button id="uploadButton" style="margin-top: 10px; width:100%; background:#10b981; color:white;">アップロード開始</button>
-                </div>
-                <p id="uploadStatus"></p>
+    <div id="upload-section">
+        <div><label for="cat1Select">1. 大カテゴリ:</label><select id="cat1Select"></select><input type="text" id="cat1NewInput" class="new-input" placeholder="新しい大カテゴリ名"></div>
+        <div><label for="cat2Select">2. 中カテゴリ:</label><select id="cat2Select"></select><input type="text" id="cat2NewInput" class="new-input" placeholder="新しい中カテゴリ名"></div>
+        <div><label for="cat3Select">3. 小カテゴリ:</label><select id="cat3Select"></select><input type="text" id="cat3NewInput" class="new-input" placeholder="新しい小カテゴリ名"></div>
+        <div><label for="folderInput">4. フォルダ名:</label><input type="text" id="folderInput" value="default_folder"></div>
+        <div style="grid-column: span 2;">
+            <p style="margin-top:20px;">5. ファイルを選択 または ドラッグ＆ドロップ</p>
+            <div id="dropZone">
+                ここにファイルをドラッグ＆ドロップ<br>または
+                <input type="file" id="imageInput" accept="image/*" multiple style="display: none;">
+                <button type="button" onclick="document.getElementById('imageInput').click();">ファイルを選択</button>
+                <div id="fileInfo">選択されていません</div>
             </div>
+            <button id="uploadButton" style="margin-top: 15px;">アップロード</button>
         </div>
-
-        <div class="panel" id="csv-manage-section">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-weight:bold; color:#166534;">📄 商品情報CSV管理</span>
-                <button onclick="location.href='/api/products/template'" style="background:#475569; color:white; padding:5px 10px; font-size:0.8em;">テンプレートDL</button>
-            </div>
-            <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
-                <input type="file" id="productCsvInput" accept=".csv" style="width:auto;">
-                <button id="importCsvBtn" style="background:#15803d; color:white; padding:8px 15px;">CSV登録</button>
-                <span id="csvImportStatus" style="font-size:0.9em; font-weight:bold;"></span>
-            </div>
-            
-            <div id="db-stats">
-                <span>画像数: <b id="stat-img">-</b></span>
-                <span>商品データ数: <b id="stat-prod">-</b></span>
-                <span>連携済み: <b id="stat-link" style="color:#15803d;">-</b></span>
-                <button id="check-mismatch-btn">不一致を診断</button>
-            </div>
-
-            <h4 style="margin:15px 0 5px 0; font-size:0.9em; color:#166534;">登録履歴</h4>
-            <div id="csv-file-list"></div>
-        </div>
-
-        <div class="panel">
-            <h3>🖼️ ギャラリー・検索 <a href="#" id="csvDownloader" style="font-size:0.8em; margin-left:10px; display:none;">[現在の一覧をCSV保存]</a></h3>
-            
-            <div id="search-section">
-                <input type="search" id="searchInput" placeholder="商品名、型番、ファイル名で検索..." style="flex-grow:1; margin-bottom:0;">
-                <select id="sortBy" style="width:auto; margin-bottom:0;"><option value="created_at">登録日順</option><option value="title">名前順</option></select>
-                <select id="sortOrder" style="width:auto; margin-bottom:0;"><option value="DESC">新しい順</option><option value="ASC">古い順</option></select>
-            </div>
-
-            <div id="gallery-section">
-                <div id="cat1-container" class="gallery-column"><h4>大カテゴリ</h4><div class="loading-msg"></div></div>
-                <div id="cat2-container" class="gallery-column"><h4>中カテゴリ</h4><div class="loading-msg"></div></div>
-                <div id="cat3-container" class="gallery-column"><h4>小カテゴリ</h4><div class="loading-msg"></div></div>
-                <div id="folder-container" class="gallery-column"><h4>フォルダ</h4><div class="loading-msg"></div></div>
-            </div>
-
-            <hr>
-            <div id="image-gallery-container"></div>
-        </div>
+        <p id="uploadStatus" style="grid-column: span 3;"></p>
+    </div><hr>
+    <h3>履歴のダウンロード</h3><p>現在選択中の**フォルダ**のCSVをダウンロードします。</p><a href="#" id="csvDownloader" style="visibility: hidden;">CSVダウンロード</a> <span id="csv-status-text">(フォルダ選択で有効化)</span> <span id="analyzeStatus"></span> <hr>
+    <h3>階層別 ギャラリー</h3><p>大 → 中 → 小 → フォルダ の順に選択。(A:解析 E:編集 X:削除)</p>
+    <div id="gallery-section">
+        <div id="cat1-container" class="gallery-column"><h4>大カテゴリ</h4><p class="loading-status">読込中...</p></div>
+        <div id="cat2-container" class="gallery-column"><h4>中カテゴリ</h4><p class="loading-status"></p></div>
+        <div id="cat3-container" class="gallery-column"><h4>小カテゴリ</h4><p class="loading-status"></p></div>
+        <div id="folder-container" class="gallery-column"><h4>フォルダ</h4><p class="loading-status"></p></div>
     </div>
+    <div id="search-section" style="display: none;">
+        <div> <label for="searchInput">画像検索:</label> <input type="search" id="searchInput" placeholder="ファイル名の一部..."> </div>
+        <div id="sort-controls"> <label for="sortBy">並び替え:</label> <select id="sortBy"> <option value="created_at" selected>アップロード日</option> <option value="title">ファイル名</option> </select> <select id="sortOrder"> <option value="DESC" selected>新しい順 / 降順(Z-A)</option> <option value="ASC">古い順 / 昇順(A-Z)</option> </select> </div>
+    </div>
+    <div id="image-gallery-container"></div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js" integrity="sha512-/4kQE5RJQYHRhUiK+CZS8UhaJTnLmQkDuf8lOhiP2xLdjthA/rm0VqqWjcyelIx+NDyNHFmtqvuIgOFQnI34WA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
     <script>
-        document.addEventListener('DOMContentLoaded', async () => {
-            try {
-                const res = await fetch('/api/auth/check');
-                const data = await res.json();
-                if (data.loggedIn) {
-                    document.getElementById('username-display').textContent = `User: ${data.username}`;
-                    initApp();
-                } else { window.location.href = '/login'; }
-            } catch (e) { window.location.href = '/login'; }
-        });
-
-        document.getElementById('logoutButton').addEventListener('click', async () => {
-            await fetch('/api/auth/logout', { method: 'POST' }); window.location.href = '/login';
-        });
-
-        document.getElementById('fix-db-btn').addEventListener('click', async () => {
-            if(!confirm('DB修復を実行しますか？')) return;
-            try { await fetch('/api/admin/init-db', { method: 'POST' }); alert('完了'); location.reload(); } catch(e){alert('Error');}
-        });
-
-        const els = {
-            file: document.getElementById('imageInput'),
-            c1: document.getElementById('cat1Select'), c1n: document.getElementById('cat1NewInput'),
-            c2: document.getElementById('cat2Select'), c2n: document.getElementById('cat2NewInput'),
-            c3: document.getElementById('cat3Select'), c3n: document.getElementById('cat3NewInput'),
-            folder: document.getElementById('folderInput'),
-            upBtn: document.getElementById('uploadButton'), stat: document.getElementById('uploadStatus'),
-            drop: document.getElementById('dropZone'), info: document.getElementById('fileInfo'),
-            gal: document.getElementById('image-gallery-container'),
-            csv: document.getElementById('csvDownloader'),
-            search: document.getElementById('searchInput'), sort: document.getElementById('sortBy'), order: document.getElementById('sortOrder'),
-            csvIn: document.getElementById('productCsvInput'), impBtn: document.getElementById('importCsvBtn'), impStat: document.getElementById('csvImportStatus'),
-            csvList: document.getElementById('csv-file-list'),
-            stImg: document.getElementById('stat-img'), stProd: document.getElementById('stat-prod'), stLink: document.getElementById('stat-link'), checkBtn: document.getElementById('check-mismatch-btn')
-        };
-        let sels = { c1: null, c2: null, c3: null, f: null };
+        // --- HTML要素を取得 ---
+        const fileInput = document.getElementById('imageInput');
+        const cat1Select = document.getElementById('cat1Select'); const cat1NewInput = document.getElementById('cat1NewInput');
+        const cat2Select = document.getElementById('cat2Select'); const cat2NewInput = document.getElementById('cat2NewInput');
+        const cat3Select = document.getElementById('cat3Select'); const cat3NewInput = document.getElementById('cat3NewInput');
+        const folderInput = document.getElementById('folderInput');
+        const uploadButton = document.getElementById('uploadButton');
+        const statusP = document.getElementById('uploadStatus');
+        const cat1Container = document.getElementById('cat1-container'); const cat2Container = document.getElementById('cat2-container'); const cat3Container = document.getElementById('cat3-container'); const folderContainer = document.getElementById('folder-container');
+        const galleryContainer = document.getElementById('image-gallery-container');
+        const csvButton = document.getElementById('csvDownloader'); const csvStatus = document.getElementById('csv-status-text');
+        const searchSection = document.getElementById('search-section'); const searchInput = document.getElementById('searchInput');
+        const dropZone = document.getElementById('dropZone'); const fileInfo = document.getElementById('fileInfo');
+        const analyzeStatus = document.getElementById('analyzeStatus');
+        const sortBySelect = document.getElementById('sortBy');
+        const sortOrderSelect = document.getElementById('sortOrder');
+        let selections = { cat1: null, cat2: null, cat3: null, folder: null };
         let lightbox;
 
-        function initApp() {
-            loadCat1(); setupDropZone(); setupSelects(); loadCsvList(); loadStats();
-            els.upBtn.onclick = uploadFiles;
-            els.search.oninput = debounce(() => loadImages(sels.f, els.search.value), 500);
-            els.sort.onchange = els.order.onchange = () => loadImages(sels.f, els.search.value);
-            els.impBtn.onclick = importCsv;
-            els.checkBtn.onclick = checkMismatch;
-        }
+        // --- ドラッグ＆ドロップ イベントリスナー ---
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+        dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('drag-over'); });
+        dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); const f = e.dataTransfer.files; if (f.length > 0) { fileInput.files = f; updateFileInfo(); } });
+        fileInput.addEventListener('change', updateFileInfo);
+        function updateFileInfo() { fileInfo.textContent = fileInput.files.length > 0 ? `${fileInput.files.length} ファイル` : '選択されていません'; }
 
-        async function loadStats() {
+        // --- アップロード機能 ---
+        uploadButton.addEventListener('click', async () => {
+            const files = fileInput.files;
+            const cat1 = cat1Select.value === '_new_' ? cat1NewInput.value.trim() : cat1Select.value;
+            const cat2 = cat2Select.value === '_new_' ? cat2NewInput.value.trim() : cat2Select.value;
+            const cat3 = cat3Select.value === '_new_' ? cat3NewInput.value.trim() : cat3Select.value;
+            const folderName = folderInput.value.trim();
+            if (files.length === 0 || !cat1 || !cat2 || !cat3 || !folderName) { alert('カテゴリ/フォルダ名を入力/選択し、ファイルを選択/ドロップしてください。'); return; }
+            const formData = new FormData(); formData.append('category1', cat1); formData.append('category2', cat2); formData.append('category3', cat3); formData.append('folderName', folderName);
+            for (let i = 0; i < files.length; i++) { formData.append('imageFiles', files[i]); }
+            statusP.style.color = 'blue'; statusP.innerText = `アップロード中...`;
             try {
-                const d = await (await fetch('/api/products/stats')).json();
-                els.stImg.innerText = d.images; els.stProd.innerText = d.products; els.stLink.innerText = d.linked;
-            } catch(e) {}
-        }
-        async function checkMismatch() {
-            try {
-                const d = await (await fetch('/api/debug/mismatch')).json();
-                let msg = '【不一致診断】\n';
-                if(d.unlinkedProducts.length) { msg+='\n●CSVにあるが画像がない(例):\n'+d.unlinkedProducts.map(p=>`・${p.product_name} (画像: ${p.image_filename})`).join('\n'); }
-                else { msg+='\n●CSVデータは紐付いています'; }
-                msg+='\n\n';
-                if(d.recentImages.length) { msg+='\n●画像はあるがCSVがない(例):\n'+d.recentImages.map(i=>`・${i.title.split('/').pop()}`).join('\n'); }
-                alert(msg);
-            } catch(e){ alert('Error'); }
-        }
+                const response = await fetch('/upload', { method: 'POST', body: formData }); const data = await response.json();
+                if (response.ok) { statusP.style.color = 'green'; statusP.innerText = data.message; fileInput.value = ''; updateFileInfo(); loadCat1(); }
+                else { throw new Error(data.message); }
+            } catch (error) { statusP.style.color = 'red'; statusP.innerText = `失敗: ${error.message}`; }
+        });
 
-        async function loadCsvList() {
+        // --- ギャラリー機能 ---
+        // ▼ 認証機能 (DOMContentLoaded の修正) ▼
+        document.addEventListener('DOMContentLoaded', async () => {
+            // 1. ログイン状態をチェック
             try {
-                const list = await (await fetch('/api/products/files')).json();
-                els.csvList.innerHTML = list.length ? '' : '<div style="padding:10px; color:#999;">履歴なし</div>';
-                list.forEach(f => {
-                    const div = document.createElement('div'); div.className='csv-item';
-                    div.innerHTML = `<span class="csv-name">${f.filename}</span><div class="csv-actions"><button onclick="downloadCsvFile(${f.id})" style="background:#17a2b8; color:white; border:none;">DL</button><button onclick="delCsv(${f.id})" style="background:#dc3545; color:white; border:none;">削除</button></div>`;
-                    els.csvList.appendChild(div);
-                });
-            } catch(e) {}
-        }
-        async function delCsv(id) { if(confirm('削除しますか？')) { await fetch(`/api/products/files/${id}`,{method:'DELETE'}); loadCsvList(); loadStats(); if(sels.f)loadImages(sels.f,els.search.value); } }
-        async function importCsv() {
-            if(!els.csvIn.files.length) return alert('CSVを選択');
-            const fd = new FormData(); fd.append('csvFile', els.csvIn.files[0]);
-            els.impStat.innerText="登録中...";
-            try {
-                const r = await fetch('/api/products/import', {method:'POST', body:fd});
-                if(!r.ok) throw new Error();
-                els.impStat.innerText="完了"; els.impStat.style.color="green"; loadCsvList(); loadStats();
-                if(sels.f) loadImages(sels.f, els.search.value);
-            } catch(e) { els.impStat.innerText="失敗"; els.impStat.style.color="red"; }
-        }
-        function downloadCsvFile(id) { window.location.href = `/api/products/files/${id}/download`; }
+                const response = await fetch('/api/auth/check');
+                const authData = await response.json();
 
-        async function loadImages(f, q='') {
-            if(!f && !q) return;
-            els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center;">読込中...</p>';
-            const p = new URLSearchParams({ cat1: sels.c1||'', cat2: sels.c2||'', cat3: sels.c3||'', folder: f||'', q: q, sort: els.sort.value, order: els.order.value });
+                if (authData.loggedIn) {
+                    // 2. ログイン済み -> ユーザー名を表示し、アプリを初期化
+                    document.getElementById('username-display').textContent = `ようこそ, ${authData.username} さん`;
+                    loadCat1(); // メインの処理を開始
+                    setupSelectListeners();
+                    setupSortListeners();
+                    setupLogoutButton(); // ログアウトボタンの設定
+                } else {
+                    // 3. 未ログイン -> ログインページへリダイレクト
+                    window.location.href = '/login';
+                }
+            } catch (error) {
+                window.location.href = '/login'; // エラー時もログインへ
+            }
+        });
+
+        // Select要素の選択肢生成
+        function populateSelect(selectElement, items, currentSelection) {
+            selectElement.innerHTML = '<option value="">--- 選択 ---</option>';
+            items.forEach(item => { const option = document.createElement('option'); option.value = item; option.text = item; if (item === currentSelection) option.selected = true; selectElement.appendChild(option); });
+            const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption);
+        }
+        // Select変更イベント設定
+        function setupSelectListeners() {
+            cat1Select.addEventListener('change', () => handleSelectChange(cat1Select, cat1NewInput, 1));
+            cat2Select.addEventListener('change', () => handleSelectChange(cat2Select, cat2NewInput, 2));
+            cat3Select.addEventListener('change', () => handleSelectChange(cat3Select, cat3NewInput, 3));
+        }
+        // Select変更共通処理
+        function handleSelectChange(selectElement, newInputElement, level) {
+            const value = selectElement.value;
+            if (value === '_new_') {
+                newInputElement.style.display = 'block'; newInputElement.focus();
+                if (level === 1) { resetUploadUI(2, true); resetUploadUI(3, true); } if (level === 2) { resetUploadUI(3, true); }
+            } else {
+                newInputElement.style.display = 'none'; newInputElement.value = '';
+                if (level === 1 && value) { loadCat2Options(value); resetUploadUI(3); }
+                if (level === 2 && value && cat1Select.value && cat1Select.value !== '_new_') { loadCat3Options(cat1Select.value, value); }
+            }
+        }
+        // アップロードUIリセット
+        function resetUploadUI(startLevel, createOnly = false){
+             if (startLevel <= 2) { resetAndAddCreateOption(cat2Select); cat2NewInput.style.display='none'; cat2NewInput.value=''; }
+             if (startLevel <= 3) { resetAndAddCreateOption(cat3Select); cat3NewInput.style.display='none'; cat3NewInput.value=''; }
+        }
+        // Selectをリセットして「新規作成」だけを追加
+        function resetAndAddCreateOption(selectElement) { selectElement.innerHTML = '<option value="">---</option>'; const newOption = document.createElement('option'); newOption.value = '_new_'; newOption.text = '--- 新規作成 ---'; selectElement.appendChild(newOption); }
+
+        // --- 階層リスト読み込み ---
+        async function loadCat1() { resetUI(1); resetUploadUI(1); await loadList('/api/cat1', cat1Container, '大カテゴリ', (n) => { selections.cat1 = n; loadCat2(n); cat1Select.value = n; handleSelectChange(cat1Select, cat1NewInput, 1); }, true, 1); await loadCat1Options(); }
+        async function loadCat1Options(){ try { const r=await fetch('/api/cat1'); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat1Select, i, selections.cat1); } catch(e){ console.error("Cat1 opt err:", e); cat1Select.innerHTML='<option value="">失敗</option>'; } }
+        async function loadCat2(c1) { resetUI(2); resetUploadUI(2); await loadList(`/api/cat2/${encodeURIComponent(c1)}`, cat2Container, '中カテゴリ', (n) => { selections.cat2 = n; loadCat3(c1, n); cat2Select.value = n; handleSelectChange(cat2Select, cat2NewInput, 2); }, true, 2); await loadCat2Options(c1); }
+        async function loadCat2Options(c1){ try { const r=await fetch(`/api/cat2/${encodeURIComponent(c1)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat2Select, i, selections.cat2); } catch(e){ console.error("Cat2 opt err:", e); cat2Select.innerHTML=''; } }
+        async function loadCat3(c1, c2) { resetUI(3); resetUploadUI(3); await loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`, cat3Container, '小カテゴリ', (n) => { selections.cat3 = n; loadFolders(c1, c2, n); cat3Select.value = n; handleSelectChange(cat3Select, cat3NewInput, 3); }, true, 3); await loadCat3Options(c1, c2); }
+        async function loadCat3Options(c1, c2){ try { const r=await fetch(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}`); if(!r.ok) throw Error(`HTTP ${r.status}`); const i=await r.json(); populateSelect(cat3Select, i, selections.cat3); } catch(e){ console.error("Cat3 opt err:", e); cat3Select.innerHTML=''; } }
+        async function loadFolders(c1, c2, c3) { resetUI(4); await loadList(`/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`, folderContainer, 'フォルダ', (n) => { selections.folder = n; loadImages(n); folderInput.value = n; }, true, 4); }
+
+        // 汎用リスト読み込み関数
+        async function loadList(apiUrl, container, title, onClickCallback, addActionButtons = false, level = 0) {
+            container.innerHTML = `<h4>${title}</h4><p class="loading-status">読込中...</p>`;
             try {
-                const r = await fetch(`/api/search?${p}`);
-                const d = await r.json();
-                els.gal.innerHTML = d.length ? '' : '<p style="grid-column:span 4; text-align:center; color:#888;">該当なし</p>';
-                
-                d.forEach(img => {
-                    const div = document.createElement('div'); div.className = 'image-item';
-                    const name = img.title.split('/').pop();
-                    
-                    let infoHtml = '', captionHtml = '';
-                    
-                    if(img.product_name) {
-                        const stockText = (img.stock && img.stock > 0) ? `在庫: ${img.stock}` : `在庫切れ`;
-                        const stockClass = (img.stock && img.stock > 0) ? 'stock-ok' : 'stock-ng';
-                        
-                        infoHtml = `<div class="product-info"><div class="p-name" title="${img.product_name}">${img.product_name}</div><div class="p-model">${img.model_num1 || '-'} ${img.model_num2 || ''}</div><div class="p-stats"><span class="p-stock ${stockClass}">${stockText}</span><div class="p-prices"><div>EC: <span class="price-val">¥${img.ec_price ? img.ec_price.toLocaleString() : '-'}</span></div><div>メルカリ: ¥${img.mercari_price ? img.mercari_price.toLocaleString() : '-'}</div></div></div></div>`;
-                        
-                        // ★修正: キャプション用のHTMLを1行にまとめる（JS文字列として安全に）
-                        captionHtml = `<div style='text-align:center;'><b style='font-size:1.2em;color:#fff;'>${img.product_name}</b><br><span style='font-size:0.9em;color:#ccc;'>${img.model_num1||''} ${img.model_num2||''}</span><br><span style='color:${img.stock>0?'#4ade80':'#f87171'};font-weight:bold;'>${stockText}</span><br>EC: ¥${img.ec_price} / メル: ¥${img.mercari_price}</div>`;
-                    } else {
-                        infoHtml = `<div class="product-info" style="color:#999;"><div class="p-name" style="font-weight:normal;">${name}</div><div style="margin-top:10px; font-size:0.8em;">商品情報なし</div></div>`;
-                        captionHtml = `${name}<br><span style='font-size:0.8em; color:#ccc;'>(商品情報未登録)</span>`;
+                const response = await fetch(apiUrl); 
+                if (response.status === 401) { throw new Error('401'); } // 認証エラー
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const items = await response.json(); container.innerHTML = `<h4>${title}</h4>`;
+                if (items.length === 0) { container.innerHTML += '<p>データなし</p>'; return; }
+                items.forEach(itemName => {
+                    const itemDiv = document.createElement('div'); itemDiv.className = 'gallery-item';
+                    const nameSpan = document.createElement('span'); nameSpan.innerText = itemName;
+                    nameSpan.addEventListener('click', () => { document.querySelectorAll(`#${container.id} .gallery-item`).forEach(el => el.classList.remove('active')); itemDiv.classList.add('active'); onClickCallback(itemName); });
+                    itemDiv.appendChild(nameSpan);
+                    if (addActionButtons) {
+                        const actionButtons = document.createElement('div'); actionButtons.className = 'action-buttons';
+                        if (level === 4) { const analyzeBtn = document.createElement('button'); analyzeBtn.className = 'analyze-btn'; analyzeBtn.innerText = 'A'; analyzeBtn.title = '解析CSV出力'; analyzeBtn.addEventListener('click', (e) => { e.stopPropagation(); analyzeFolder(itemName); }); actionButtons.appendChild(analyzeBtn); }
+                        const editBtn = document.createElement('button'); editBtn.className = 'edit-btn'; editBtn.innerText = 'E'; editBtn.title = '名前変更'; editBtn.addEventListener('click', (e) => { e.stopPropagation(); renameItem(itemName, level); });
+                        const deleteBtn = document.createElement('button'); deleteBtn.className = 'delete-btn'; deleteBtn.innerText = 'X'; deleteBtn.title = '削除'; deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteItem(itemName, level); });
+                        actionButtons.appendChild(editBtn); actionButtons.appendChild(deleteBtn); itemDiv.appendChild(actionButtons);
                     }
-
-                    // クォートのエスケープ処理 (属性値用)
-                    const safeCaption = captionHtml.replace(/"/g, '&quot;');
-
-                    let mediaHtml = '';
-                    if (img.url.toLowerCase().endsWith('.pdf')) {
-                        mediaHtml = `<div class="img-wrapper"><a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em; font-weight:normal;">${name}</span></a></div>`;
-                    } else {
-                        // ★修正: data-caption に安全なHTML文字列をセット
-                        mediaHtml = `<div class="img-wrapper"><a href="${img.url}" class="lightbox-link" data-caption="${safeCaption}"><img src="${img.url}" class="gallery-image" alt="${name}"></a></div>`;
-                    }
-
-                    div.innerHTML = mediaHtml + infoHtml;
-                    els.gal.appendChild(div);
+                    container.appendChild(itemDiv);
                 });
-                
-                if(lightbox) lightbox.destroy();
-                // ★修正: data-caption を使う設定に変更
-                lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link', { 
-                    captionsData: 'data-caption', // data-caption属性の中身を表示
-                    captionDelay: 0,
-                    captionPosition: 'bottom'
-                });
-                
-                els.csv.style.display = f ? 'inline' : 'none';
-                if(f) els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
-            } catch(e) { els.gal.innerHTML = `<p style="color:red;">${e.message}</p>`; }
+            } catch (error) { 
+                console.error(`${title}読み込みエラー:`, error); 
+                container.innerHTML = `<h4>${title}</h4><p style="color: red;">失敗</p>`; 
+                // ▼ 認証機能 (401エラーチェック) ▼
+                if (error.message.includes("401")) {
+                    alert("セッションが切れました。再度ログインしてください。");
+                    window.location.href = '/login';
+                }
+                // ▲ 認証機能 ▲
+            }
         }
 
-        // (以下変更なし)
-        async function loadList(u,i,t,cb){const d=document.getElementById(i);d.innerHTML=`<h4>${t}</h4><div style="padding:10px; color:#999;">Loading...</div>`;try{const r=await fetch(u);const j=await r.json();d.innerHTML=`<h4>${t}</h4>`;j.forEach(v=>{const e=document.createElement('div');e.className='gallery-item';e.innerText=v;e.onclick=()=>{d.querySelectorAll('.gallery-item').forEach(x=>x.classList.remove('active'));e.classList.add('active');cb(v);};d.appendChild(e);});}catch(e){}}
-        async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--</option>';j.forEach(v=>s.innerHTML+=`<option value="${v}">${v}</option>`);s.innerHTML+='<option value="_new_">+新</option>';}catch(e){}}
-        const loadCat1=()=>{resetUI(1);loadList('/api/cat1','cat1-container','大',v=>{sels.c1=v;els.c1.value=v;checkNew(els.c1,els.c1n);loadCat2(v);});loadOpts('/api/cat1',els.c1);};
-        const loadCat2=(c)=>{resetUI(2);loadList(`/api/cat2/${c}`,'cat2-container','中',v=>{sels.c2=v;els.c2.value=v;checkNew(els.c2,els.c2n);loadCat3(c,v);});loadOpts(`/api/cat2/${c}`,els.c2);};
-        const loadCat3=(c1,c2)=>{resetUI(3);loadList(`/api/cat3/${c1}/${c2}`,'cat3-container','小',v=>{sels.c3=v;els.c3.value=v;checkNew(els.c3,els.c3n);loadFolder(c1,c2,v);});loadOpts(`/api/cat3/${c1}/${c2}`,els.c3);};
-        const loadFolder=(c1,c2,c3)=>{resetUI(4);loadList(`/api/folders/${c1}/${c2}/${c3}`,'folder-container','フォルダ',v=>{sels.f=v;els.folder.value=v;loadImages(v);});};
-        function resetUI(l){if(l<=1)document.getElementById('cat2-container').innerHTML='<h4>中</h4>';if(l<=2)document.getElementById('cat3-container').innerHTML='<h4>小</h4>';if(l<=3)document.getElementById('folder-container').innerHTML='<h4>フォルダ</h4>';if(l<=4)els.gal.innerHTML='';}
-        function setupDropZone(){els.drop.ondragover=e=>{e.preventDefault();els.drop.classList.add('drag-over');};els.drop.ondragleave=()=>els.drop.classList.remove('drag-over');els.drop.ondrop=e=>{e.preventDefault();els.drop.classList.remove('drag-over');els.file.files=e.dataTransfer.files;els.info.innerText=els.file.files.length+' Files';};els.file.onchange=()=>els.info.innerText=els.file.files.length+' Files';}
-        function setupSelects(){const h=(s,i,l)=>{checkNew(s,i);if(s.value!=='_new_'){if(l===1)loadCat2(s.value);if(l===2)loadCat3(sels.c1,s.value);}};els.c1.onchange=()=>h(els.c1,els.c1n,1);els.c2.onchange=()=>h(els.c2,els.c2n,2);els.c3.onchange=()=>checkNew(els.c3,els.c3n);}
-        function checkNew(s,i){i.style.display=s.value==='_new_'?'block':'none';}
-        async function uploadFiles(){const fd=new FormData();fd.append('category1',els.c1.value==='_new_'?els.c1n.value:els.c1.value);fd.append('category2',els.c2.value==='_new_'?els.c2n.value:els.c2.value);fd.append('category3',els.c3.value==='_new_'?els.c3n.value:els.c3.value);fd.append('folderName',els.folder.value);for(let f of els.file.files)fd.append('imageFiles',f);els.stat.innerText='UP...';try{const r=await fetch('/upload',{method:'POST',body:fd});if(!r.ok)throw 1;els.stat.innerText='OK';els.file.value='';loadCat1();loadStats();}catch(e){els.stat.innerText='Err';}}
-        function debounce(f,w){let t;return function(...a){clearTimeout(t);t=setTimeout(()=>f.apply(this,a),w);};}
+        // UIリセット関数
+        function resetUI(startLevel) { if (startLevel <= 1) { selections.cat1 = null; cat2Container.innerHTML = '<h4>中カテゴリ</h4>'; } if (startLevel <= 2) { selections.cat2 = null; cat3Container.innerHTML = '<h4>小カテゴリ</h4>'; } if (startLevel <= 3) { selections.cat3 = null; folderContainer.innerHTML = '<h4>フォルダ</h4>'; } if (startLevel <= 4) { selections.folder = null; galleryContainer.innerHTML = ''; searchSection.style.display = 'none'; searchInput.value = ''; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; analyzeStatus.innerText = ''; } }
+        
+        // 画像読み込みトリガー
+        async function loadImages(folderName) { selections.folder = folderName; searchInput.value = ''; searchSection.style.display = 'flex'; const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.cat1, selections.cat2, selections.cat3, folderName, '', sortBy, sortOrder); }
+        
+        // 検索イベントリスナー
+        let searchTimeout; searchInput.addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { if (selections.cat1 && selections.cat2 && selections.cat3 && selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.cat1, selections.cat2, selections.cat3, selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }, 300); });
+        
+        // 並び替えイベントリスナー
+        function setupSortListeners() { sortBySelect.addEventListener('change', handleSortChange); sortOrderSelect.addEventListener('change', handleSortChange); }
+        async function handleSortChange() { if (selections.cat1 && selections.cat2 && selections.cat3 && selections.folder) { const sortBy = sortBySelect.value; const sortOrder = sortOrderSelect.value; await displayImages(selections.cat1, selections.cat2, selections.cat3, selections.folder, searchInput.value.trim(), sortBy, sortOrder); } }
+
+        // 画像取得・表示関数
+        async function displayImages(cat1, cat2, cat3, folderName, searchTerm, sortBy = 'created_at', sortOrder = 'DESC') {
+            try {
+                if (lightbox) { lightbox.destroy(); lightbox = null; }
+                galleryContainer.innerHTML = '<p>読込中...</p>'; 
+                const params = new URLSearchParams({ cat1: cat1, cat2: cat2, cat3: cat3, folder: folderName, sort: sortBy, order: sortOrder });
+                let apiUrl = searchTerm ? `/api/search?${params.toString()}&q=${encodeURIComponent(searchTerm)}` : `/api/search?${params.toString()}`;
+                const response = await fetch(apiUrl); 
+                if (response.status === 401) { throw new Error('401'); }
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const images = await response.json(); galleryContainer.innerHTML = '';
+                if (images.length === 0) { galleryContainer.innerHTML = searchTerm ? '<p>検索結果なし</p>' : '<p>画像なし</p>'; }
+                else {
+                    images.forEach(imgData => {
+                        const itemContainer = document.createElement('div'); itemContainer.className = 'image-item';
+                        const link = document.createElement('a'); link.href = imgData.url;
+                        const filename = imgData.title.split('/').pop() || imgData.title;
+                        const img = document.createElement('img'); img.className='gallery-image'; img.src=imgData.url; img.alt=filename; img.title=filename; 
+                        link.appendChild(img); itemContainer.appendChild(link); galleryContainer.appendChild(itemContainer);
+                    });
+                    lightbox = new SimpleLightbox('#image-gallery-container .image-item a');
+                }
+                const csvParams = new URLSearchParams({ cat1: cat1, cat2: cat2, cat3: cat3, folder: folderName });
+                csvButton.href = `/download-csv?${csvParams.toString()}`; csvButton.style.visibility = 'visible'; csvStatus.innerText = `「${folderName}」CSV`;
+            } catch (error) { 
+                console.error('画像読込/検索エラー:', error); galleryContainer.innerHTML = '<p style="color: red;">失敗</p>'; csvButton.style.visibility = 'hidden'; csvStatus.innerText = '(フォルダ選択で有効化)'; if (lightbox) { lightbox.destroy(); lightbox = null; } 
+                if (error.message.includes("401")) { alert("セッションが切れました。再度ログインしてください。"); window.location.href = '/login'; }
+            }
+        }
+
+        // 削除関数
+        async function deleteItem(itemName, level) {
+            let apiPath = ''; let confirmMsg = `「${itemName}」`; let refreshFunction = loadCat1;
+            if (level === 1) { apiPath = `/api/cat1/${encodeURIComponent(itemName)}`; confirmMsg += ' (大)以下全て削除しますか？⚠⚠⚠'; }
+            else if (level === 2 && selections.cat1) { apiPath = `/api/cat2/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(itemName)}`; confirmMsg += ' (中)以下全て削除しますか？⚠'; refreshFunction = () => loadCat2(selections.cat1); }
+            else if (level === 3 && selections.cat1 && selections.cat2) { apiPath = `/api/cat3/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(itemName)}`; confirmMsg += ' (小)以下全て削除しますか？⚠'; refreshFunction = () => loadCat3(selections.cat1, selections.cat2); }
+            else if (level === 4) { apiPath = `/api/folder/${encodeURIComponent(itemName)}`; confirmMsg += ' (フォルダ)内の画像を削除しますか？⚠'; refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); }
+            else { return; }
+            if (!confirm(confirmMsg)) return;
+            try {
+                statusP.innerText = `削除中...`; statusP.style.color = 'blue'; const response = await fetch(apiPath, { method: 'DELETE' }); 
+                if (response.status === 401) { throw new Error('401'); }
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json(); statusP.innerText = data.message; statusP.style.color = 'green'; refreshFunction(); resetUI(level + 1);
+            } catch (error) { 
+                console.error('削除エラー:', error); statusP.innerText = '削除失敗'; statusP.style.color = 'red'; 
+                if (error.message.includes("401")) { alert("セッションが切れました。再度ログインしてください。"); window.location.href = '/login'; }
+            }
+        }
+        // 名前変更関数
+        async function renameItem(oldItemName, level) {
+            const newItemName = prompt(`「${oldItemName}」の新しい名前:`, oldItemName); if (!newItemName || newItemName.trim() === '' || newItemName.trim() === oldItemName) return;
+            let apiPath = ''; let refreshFunction = loadCat1;
+            if (level === 1) { apiPath = `/api/cat1/${encodeURIComponent(oldItemName)}`; }
+            else if (level === 2 && selections.cat1) { apiPath = `/api/cat2/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadCat2(selections.cat1); }
+            else if (level === 3 && selections.cat1 && selections.cat2) { apiPath = `/api/cat3/${encodeURIComponent(selections.cat1)}/${encodeURIComponent(selections.cat2)}/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadCat3(selections.cat1, selections.cat2); }
+            else if (level === 4) { apiPath = `/api/folder/${encodeURIComponent(oldItemName)}`; refreshFunction = () => loadFolders(selections.cat1, selections.cat2, selections.cat3); }
+            else { return; }
+            try {
+                statusP.innerText = `変更中...`; statusP.style.color = 'blue';
+                const response = await fetch(apiPath, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ newName: newItemName.trim() }) });
+                if (response.status === 401) { throw new Error('401'); }
+                if (!response.ok) { const errData = await response.json().catch(() => ({ message: `HTTP ${response.status}` })); throw new Error(errData.message || `HTTP ${response.status}`); }
+                const data = await response.json(); statusP.innerText = data.message; statusP.style.color = 'green'; refreshFunction(); resetUI(level + 1);
+            } catch (error) { 
+                console.error('名前変更エラー:', error); statusP.innerText = `変更失敗: ${error.message}`; statusP.style.color = 'red'; 
+                if (error.message.includes("401")) { alert("セッションが切れました。再度ログインしてください。"); window.location.href = '/login'; }
+            }
+        }
+        // フォルダ解析関数
+        async function analyzeFolder(folderName) {
+            analyzeStatus.innerText = `「${folderName}」解析中...`; analyzeStatus.style.color = '#17a2b8';
+            try {
+                const encodedFolderName = encodeURIComponent(folderName); const response = await fetch(`/api/analyze/${encodedFolderName}`, { method: 'POST' });
+                if (response.status === 401) { throw new Error('401'); }
+                if (!response.ok) { const e=await response.json().catch(()=>({})); throw new Error(e.message||`HTTP ${response.status}`); }
+                const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.style.display = 'none'; a.href = url;
+                const disposition = response.headers.get('Content-Disposition'); let filename = `analysis_${folderName}.csv`;
+                if (disposition && disposition.includes('attachment')) { const m = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition); if (m && m[1]) { filename = decodeURIComponent(m[1].replace(/['"]/g, '')); } }
+                a.download = filename; document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); a.remove();
+                analyzeStatus.innerText = `「${folderName}」解析CSV完了`; analyzeStatus.style.color = 'green';
+            } catch (error) { 
+                console.error('解析エラー:', error); analyzeStatus.innerText = `解析失敗: ${error.message}`; statusP.style.color = 'red'; 
+                if (error.message.includes("401")) { alert("セッションが切れました。再度ログインしてください。"); window.location.href = '/login'; }
+            }
+        }
+
+        // --- ▼ 認証機能 (ログアウト処理) ▼ ---
+        function setupLogoutButton() {
+            document.getElementById('logoutButton').addEventListener('click', async () => {
+                try {
+                    const response = await fetch('/api/auth/logout', { method: 'POST' });
+                    if (response.ok) {
+                        window.location.href = '/login'; // ログアウト成功
+                    } else {
+                        alert('ログアウトに失敗しました。');
+                    }
+                } catch (error) {
+                    alert('ログアウト中にエラーが発生しました。');
+                }
+            });
+        }
     </script>
 </body>
 </html>
