@@ -61,7 +61,7 @@
             font-size: 1rem; transition: background 0.2s;
         }
 
-        /* カテゴリ作成エリア（Gallery内） */
+        /* カテゴリ作成エリア */
         .cat-creation-area {
             background: #f0f9ff; border: 1px solid #bae6fd; padding: 10px; border-radius: 6px; margin-bottom: 15px;
             display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
@@ -71,7 +71,7 @@
         .cat-creation-area input { margin-bottom: 0; padding: 6px; font-size: 0.9em; }
         .cat-creation-area button { padding: 8px 15px; background: #0ea5e9; color: white; font-size: 0.9em; height: 36px; }
 
-        /* ギャラリー選択 (4カラム) */
+        /* ギャラリー選択 */
         #gallery-section { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
         .gallery-column { border: 1px solid #e2e8f0; padding: 0; border-radius: 6px; background: #f8fafc; height: 250px; overflow-y: auto; }
         .gallery-column h4 { 
@@ -79,24 +79,19 @@
             font-size: 0.85em; text-align: center; color: #475569; position: sticky; top: 0; z-index: 10;
         }
         
-        /* ギャラリーアイテム（編集ボタン付き） */
         .gallery-item { 
             padding: 8px 10px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 14px; 
             transition: background 0.1s; background: #fff; display: flex; justify-content: space-between; align-items: center;
         }
         .gallery-item:hover { background-color: #f0fdf4; }
         .gallery-item.active { background-color: #15803d; color: white; }
-        .gallery-item.active .edit-btn { color: #fff; } /* 選択中は白く */
+        .gallery-item.active .edit-btn { color: #fff; }
         .count-badge { font-size: 0.85em; color: #888; margin-left: 4px; }
         .gallery-item.active .count-badge { color: #e2e8f0; }
 
         .edit-btn { background: none; border: none; cursor: pointer; color: #cbd5e1; font-size: 1.1em; padding: 0 5px; line-height: 1; }
         .edit-btn:hover { color: #f59e0b; }
         
-        /* 削除ボタン */
-        .action-buttons button { background: #dc3545; color: white; border: none; border-radius: 3px; width: 20px; height: 20px; line-height: 20px; font-size: 12px; padding: 0; cursor: pointer; margin-left:5px; }
-
-        /* 検索・一覧 */
         #search-section { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
         #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; }
         
@@ -105,14 +100,17 @@
             position: relative; transition: transform 0.2s, box-shadow 0.2s; display: flex; flex-direction: column;
         }
         .image-item:hover { transform: translateY(-3px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
-        .img-wrapper { width: 100%; aspect-ratio: 1/1; background: #f8fafc; position: relative; }
+        .img-wrapper { width: 100%;jh aspect-ratio: 1/1; background: #f8fafc; position: relative; }
         .gallery-image { width: 100%; height: 100%; object-fit: contain; display: block; }
         .pdf-icon { width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #fff1f2; color: #e11d48; font-weight: bold; text-decoration: none; }
 
         /* 商品情報 */
         .product-info { padding: 10px; font-size: 0.85rem; border-top: 1px solid #f0f0f0; background: #fff; flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; }
-        .p-name { font-weight: bold; color: #1e293b; line-height: 1.4; margin-bottom: 5px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+        .p-name { font-weight: bold; color: #1e293b; line-height: 1.4; margin-bottom: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         
+        /* 画像ファイル名表示用 */
+        .p-filename { font-size: 0.75em; color: #64748b; margin-bottom: 5px; word-break: break-all; }
+
         .p-model-container { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
         .model-badge { 
             background: #f1f5f9; border: 1px solid #cbd5e1; color: #475569; 
@@ -220,16 +218,12 @@
 
         const els = {
             file: document.getElementById('imageInput'),
-            // Upload Selects
             c1: document.getElementById('cat1Select'), c1n: document.getElementById('cat1NewInput'),
             c2: document.getElementById('cat2Select'), c2n: document.getElementById('cat2NewInput'),
             c3: document.getElementById('cat3Select'), c3n: document.getElementById('cat3NewInput'),
-            // New Category Inputs
             newC1: document.getElementById('newC1'), newC2: document.getElementById('newC2'), newC3: document.getElementById('newC3'),
             createBtn: document.getElementById('createCatBtn'),
-            // Gallery Containers
             c1Box: document.getElementById('cat1-container'), c2Box: document.getElementById('cat2-container'), c3Box: document.getElementById('cat3-container'), fBox: document.getElementById('folder-container'),
-            
             folder: document.getElementById('folderInput'),
             upBtn: document.getElementById('uploadButton'), stat: document.getElementById('uploadStatus'),
             drop: document.getElementById('dropZone'), info: document.getElementById('fileInfo'),
@@ -240,162 +234,66 @@
         let lightbox;
 
         function initApp() {
-            // Load initial lists (Use type=all to see empty categories too)
-            loadCat1(); 
-            setupDropZone(); 
-            setupSelects();
-            
+            loadCat1(); setupDropZone(); setupSelects();
             els.upBtn.onclick = uploadFiles;
             els.search.oninput = debounce(() => loadImages(sels.f, els.search.value), 500);
             els.sort.onchange = els.order.onchange = () => loadImages(sels.f, els.search.value);
-
-            // New: Category Creation
             els.createBtn.onclick = createCategoryOnly;
         }
 
-        // --- カテゴリ作成 (空箱) ---
         async function createCategoryOnly() {
             const c1 = els.newC1.value.trim();
             const c2 = els.newC2.value.trim() || '-';
             const c3 = els.newC3.value.trim() || '-';
-            
             if(!c1) return alert('大カテゴリは必須です');
-
             try {
-                const r = await fetch('/api/categories/create', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ category1: c1, category2: c2, category3: c3 })
-                });
-                const d = await r.json();
-                if(r.ok) {
-                    alert('作成しました');
-                    els.newC1.value = ''; els.newC2.value = ''; els.newC3.value = '';
-                    loadCat1(); // Reload lists
-                } else {
-                    alert('エラー: ' + d.message);
-                }
+                const r = await fetch('/api/categories/create', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ category1: c1, category2: c2, category3: c3 }) });
+                if(r.ok) { alert('作成しました'); els.newC1.value=''; els.newC2.value=''; els.newC3.value=''; loadCat1(); } else { alert('エラー'); }
             } catch(e) { alert('通信エラー'); }
         }
 
-        // --- カテゴリ名称変更 (Rename) ---
         async function renameCategory(level, oldName) {
             const newName = prompt(`「${oldName}」の新しい名前を入力してください:`, oldName);
             if(!newName || newName === oldName) return;
-
             let url = '';
             if(level === 1) url = `/api/cat1/${encodeURIComponent(oldName)}`;
             if(level === 2) url = `/api/cat2/${encodeURIComponent(sels.c1)}/${encodeURIComponent(oldName)}`;
             if(level === 3) url = `/api/cat3/${encodeURIComponent(sels.c1)}/${encodeURIComponent(sels.c2)}/${encodeURIComponent(oldName)}`;
-            if(level === 4) url = `/api/folder/${encodeURIComponent(oldName)}`; // Folder Rename
-
+            if(level === 4) url = `/api/folder/${encodeURIComponent(oldName)}`;
             try {
-                const r = await fetch(url, {
-                    method: 'PUT',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ newName: newName, folderName: newName }) // folder uses body.newName usually
-                });
+                const r = await fetch(url, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ newName: newName, folderName: newName }) });
                 if(r.ok) {
                     alert('変更しました');
-                    // Reload appropriate level
-                    if(level===1) loadCat1();
-                    else if(level===2) loadCat2(sels.c1);
-                    else if(level===3) loadCat3(sels.c1, sels.c2);
-                    else if(level===4) loadFolder(sels.c1, sels.c2, sels.c3);
-                } else { alert('変更に失敗しました'); }
+                    if(level===1) loadCat1(); else if(level===2) loadCat2(sels.c1); else if(level===3) loadCat3(sels.c1, sels.c2); else if(level===4) loadFolder(sels.c1, sels.c2, sels.c3);
+                } else { alert('失敗しました'); }
             } catch(e) { alert('通信エラー'); }
         }
 
-        // --- リスト読み込み (Upload用SelectとGallery用Divを同時に更新) ---
-        // type=all を使って空カテゴリも含めて表示する
-        const loadCat1 = () => { 
-            resetUI(1); 
-            // Select用
-            loadOpts('/api/cat1?type=all', els.c1); 
-            // Gallery用
-            loadList('/api/cat1?type=all', els.c1Box, '大カテゴリ', (v) => { 
-                sels.c1=v.name; els.c1.value=v.name; // Sync selection
-                checkNew(els.c1, els.c1n); 
-                // Auto-fill creation inputs
-                els.newC1.value = v.name; 
-                loadCat2(v.name); 
-            }, 1); 
-        };
+        const loadCat1 = () => { resetUI(1); loadOpts('/api/cat1?type=all', els.c1); loadList('/api/cat1?type=all', els.c1Box, '大カテゴリ', (v) => { sels.c1=v.name; els.c1.value=v.name; checkNew(els.c1, els.c1n); els.newC1.value = v.name; loadCat2(v.name); }, 1); };
+        const loadCat2 = (c1) => { resetUI(2); loadOpts(`/api/cat2/${encodeURIComponent(c1)}?type=all`, els.c2); loadList(`/api/cat2/${encodeURIComponent(c1)}?type=all`, els.c2Box, '中カテゴリ', (v) => { sels.c2=v.name; els.c2.value=v.name; checkNew(els.c2, els.c2n); els.newC2.value = v.name; loadCat3(c1,v.name); }, 2); };
+        const loadCat3 = (c1,c2) => { resetUI(3); loadOpts(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}?type=all`, els.c3); loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}?type=all`, els.c3Box, '小カテゴリ', (v) => { sels.c3=v.name; els.c3.value=v.name; checkNew(els.c3, els.c3n); els.newC3.value = v.name; loadFolder(c1,c2,v.name); }, 3); };
+        const loadFolder = (c1,c2,c3) => { resetUI(4); loadList(`/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`, els.fBox, 'フォルダ', (v) => { sels.f=v.name; els.folder.value=v.name; loadImages(v.name); }, 4, true); };
 
-        const loadCat2 = (c1) => { 
-            resetUI(2); 
-            loadOpts(`/api/cat2/${encodeURIComponent(c1)}?type=all`, els.c2);
-            loadList(`/api/cat2/${encodeURIComponent(c1)}?type=all`, els.c2Box, '中カテゴリ', (v) => { 
-                sels.c2=v.name; els.c2.value=v.name; 
-                checkNew(els.c2, els.c2n); 
-                els.newC2.value = v.name;
-                loadCat3(c1,v.name); 
-            }, 2); 
-        };
-
-        const loadCat3 = (c1,c2) => { 
-            resetUI(3); 
-            loadOpts(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}?type=all`, els.c3);
-            loadList(`/api/cat3/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}?type=all`, els.c3Box, '小カテゴリ', (v) => { 
-                sels.c3=v.name; els.c3.value=v.name; 
-                checkNew(els.c3, els.c3n); 
-                els.newC3.value = v.name;
-                loadFolder(c1,c2,v.name); 
-            }, 3); 
-        };
-
-        const loadFolder = (c1,c2,c3) => { 
-            resetUI(4); 
-            loadList(`/api/folders/${encodeURIComponent(c1)}/${encodeURIComponent(c2)}/${encodeURIComponent(c3)}`, els.fBox, 'フォルダ', (v) => { 
-                sels.f=v.name; els.folder.value=v.name; 
-                loadImages(v.name); 
-            }, 4, true); // true = can delete folder
-        };
-
-        // Galleryリスト生成 (編集ボタン付き + カウント表示)
         async function loadList(u, container, t, cb, level, canDelete=false) {
             container.innerHTML = `<h4>${t}</h4>`;
             try {
                 const r = await fetch(u); const j = await r.json();
-                // サーバーから {name: "...", count: N} の形で返ってくる
                 const filtered = j.filter(v => v.name !== 'default_cat1' && v.name !== 'default_cat2' && v.name !== 'default_cat3' && v.name !== '-' && v.name !== '__CATEGORY_NODE__');
-                
                 if(filtered.length===0) container.innerHTML += '<p style="padding:10px; color:#ccc; text-align:center;">(なし)</p>';
-                
                 filtered.forEach(item => {
                     const e = document.createElement('div'); e.className = 'gallery-item';
-                    
                     const span = document.createElement('span');
-                    // 名前とカッコ書きのカウントを表示
                     span.innerHTML = `${item.name} <small class="count-badge">(${item.count})</small>`;
                     span.style.flexGrow = '1';
-
-                    const actions = document.createElement('div');
-                    actions.className = 'item-actions';
-                    
-                    // Edit Button (Pencil)
-                    const editBtn = document.createElement('button');
-                    editBtn.className = 'edit-btn'; editBtn.innerHTML = '✎'; 
-                    editBtn.title = '名称変更';
-                    editBtn.onclick = (ev) => { ev.stopPropagation(); renameCategory(level, item.name); };
+                    const actions = document.createElement('div'); actions.className = 'item-actions';
+                    const editBtn = document.createElement('button'); editBtn.className = 'edit-btn'; editBtn.innerHTML = '✎'; editBtn.onclick = (ev) => { ev.stopPropagation(); renameCategory(level, item.name); };
                     actions.appendChild(editBtn);
-
-                    // Delete Button (Only for folders currently supported by backend safely)
                     if(canDelete) {
-                        const delBtn = document.createElement('button');
-                        delBtn.style.color='red'; delBtn.innerHTML='×';
-                        delBtn.style.background='none'; delBtn.style.border='none'; delBtn.style.cursor='pointer';
-                        delBtn.onclick = (ev) => { ev.stopPropagation(); deleteFolder(item.name); };
-                        actions.appendChild(delBtn);
+                        constSBBtn = document.createElement('button');SBBtn.style.color='red'; SBBtn.innerHTML='×'; SBBtn.style.background='none'; SBBtn.style.border='none'; SBBtn.style.cursor='pointer';
+                        SBBtn.onclick = (ev) => { ev.stopPropagation(); deleteFolder(item.name); }; actions.appendChild(SBBtn);
                     }
-
-                    e.appendChild(span);
-                    e.appendChild(actions);
-
-                    e.onclick = () => { 
-                        container.querySelectorAll('.gallery-item').forEach(x => x.classList.remove('active')); 
-                        e.classList.add('active'); 
-                        cb(item); 
-                    };
+                    e.appendChild(span); e.appendChild(actions);
+                    e.onclick = () => { container.querySelectorAll('.gallery-item').forEach(x => x.classList.remove('active')); e.classList.add('active'); cb(item); };
                     container.appendChild(e);
                 });
             } catch(e) { container.innerHTML += '<p style="color:red;">Error</p>'; }
@@ -412,20 +310,36 @@
                     const div = document.createElement('div'); div.className = 'image-item';
                     const name = img.title.split('/').pop();
                     let infoHtml = '', captionHtml = '';
+                    
                     if(img.product_name) {
                         const stockText = (img.stock > 0) ? `在庫:${img.stock}` : `在庫切`;
                         const stockClass = (img.stock > 0) ? 'stock-ok' : 'stock-ng';
                         const models = [img.model_num1, img.model_num2, img.model_num3, img.model_num4].filter(m => m && m.trim() !== '');
                         const modelHtml = models.length > 0 ? `<div class="p-model-container">${models.map(m => `<span class="model-badge">${m}</span>`).join('')}</div>` : `<div class="p-model-container"><span class="model-badge" style="color:#ccc;">-</span></div>`;
                         const captionModels = models.length > 0 ? models.join(' / ') : '-';
-                        infoHtml = `<div class="product-info"><div class="p-name" title="${img.product_name}">${img.product_name}<\/div>${modelHtml}<div class="p-stats"><span class="${stockClass}">${stockText}<\/span><div class="p-prices"><div>EC:<span class="price-val">¥${img.ec_price ? img.ec_price.toLocaleString() : '-'}<\/span><\/div><div>メル:¥${img.mercari_price ? img.mercari_price.toLocaleString() : '-'}<\/div><\/div><\/div><\/div>`;
-                        captionHtml = `<div style='text-align:center;'><b style='font-size:1.2em;color:#fff;'>${img.product_name}<\/b><br><span style='font-size:0.9em;color:#ccc;'>${captionModels}<\/span><br><span style='color:${img.stock>0?'#4ade80':'#f87171'};font-weight:bold;'>${stockText}<\/span><br>EC: ¥${img.ec_price} / メル: ¥${img.mercari_price}<\/div>`;
+                        
+                        // ★修正: ファイル名を表示に追加
+                        infoHtml = `
+                        <div class="product-info">
+                            <div class="p-name" title="${img.product_name}">${img.product_name}</div>
+                            <div class="p-filename">📄 ${name}</div>
+                            ${modelHtml}
+                            <div class="p-stats">
+                                <span class="${stockClass}">${stockText}</span>
+                                <div class="p-prices">
+                                    <div>EC:<span class="price-val">¥${img.ec_price ? img.ec_price.toLocaleString() : '-'}</span></div>
+                                    <div>メル:¥${img.mercari_price ? img.mercari_price.toLocaleString() : '-'}</div>
+                                </div>
+                            </div>
+                        </div>`;
+                        
+                        captionHtml = `<div style='text-align:center;'><b style='font-size:1.2em;color:#fff;'>${img.product_name}</b><br><span style='font-size:0.8em;color:#ccc;'>${name}</span><br><span style='font-size:0.9em;color:#ccc;'>${captionModels}</span><br><span style='color:${img.stock>0?'#4ade80':'#f87171'};font-weight:bold;'>${stockText}</span><br>EC: ¥${img.ec_price} / メル: ¥${img.mercari_price}</div>`;
                     } else {
-                        infoHtml = `<div class="product-info" style="color:#999;"><div class="p-name" style="font-weight:normal;">${name}<\/div><div style="margin-top:auto; font-size:0.8em;">情報なし<\/div><\/div>`;
+                        infoHtml = `<div class="product-info" style="color:#999;"><div class="p-name" style="font-weight:normal;">${name}</div><div class="p-filename">📄 ${name}</div><div style="margin-top:auto; font-size:0.8em;">情報なし</div></div>`;
                         captionHtml = `${name}`;
                     }
                     const safeCaption = captionHtml.replace(/"/g, '&quot;');
-                    let mediaHtml = img.url.toLowerCase().endsWith('.pdf') ? `<div class="img-wrapper"><a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em;">${name}<\/span><\/a><\/div>` : `<div class="img-wrapper"><a href="${img.url}" class="lightbox-link" data-caption="${safeCaption}"><img src="${img.url}" class="gallery-image" alt="${name}"><\/a><\/div>`;
+                    let mediaHtml = img.url.toLowerCase().endsWith('.pdf') ? `<div class="img-wrapper"><a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em;">${name}</span></a></div>` : `<div class="img-wrapper"><a href="${img.url}" class="lightbox-link" data-caption="${safeCaption}"><img src="${img.url}" class="gallery-image" alt="${name}"></a></div>`;
                     div.innerHTML = mediaHtml + infoHtml; els.gal.appendChild(div);
                 });
                 if(lightbox) lightbox.destroy();
@@ -435,11 +349,7 @@
             } catch(e) { els.gal.innerHTML = '<p style="color:red;">エラー<\/p>'; }
         }
 
-        async function deleteFolder(name) {
-            if(!confirm(`フォルダ「${name}」内の画像を全て削除しますか？`)) return;
-            try { const r=await fetch(`/api/folder/${encodeURIComponent(name)}`,{method:'DELETE'}); if(r.ok){alert('削除しました');loadFolder(sels.c1,sels.c2,sels.c3);} } catch(e){alert('エラー');}
-        }
-        
+        async function deleteFolder(name) { if(!confirm(`フォルダ「${name}」内の画像を全て削除しますか？`)) return; try { const r=await fetch(`/api/folder/${encodeURIComponent(name)}`,{method:'DELETE'}); if(r.ok){alert('削除しました');loadFolder(sels.c1,sels.c2,sels.c3);} } catch(e){alert('エラー');} }
         async function loadOpts(u,s){try{const r=await fetch(u);const j=await r.json();s.innerHTML='<option value="">--<\/option>';j.forEach(v=>{if(v.name!=='__CATEGORY_NODE__')s.innerHTML+=`<option value="${v.name}">${v.name} (${v.count})<\/option>`});s.innerHTML+='<option value="_new_">+新<\/option>';}catch(e){}}
         function resetUI(l){if(l<=1)document.getElementById('cat2-container').innerHTML='<h4>中カテゴリ<\/h4>';if(l<=2)document.getElementById('cat3-container').innerHTML='<h4>小カテゴリ<\/h4>';if(l<=3)document.getElementById('folder-container').innerHTML='<h4>フォルダ<\/h4>';if(l<=4)els.gal.innerHTML='';}
         function setupDropZone(){els.drop.ondragover=e=>{e.preventDefault();els.drop.classList.add('drag-over');};els.drop.ondragleave=()=>els.drop.classList.remove('drag-over');els.drop.ondrop=e=>{e.preventDefault();els.drop.classList.remove('drag-over');els.file.files=e.dataTransfer.files;els.info.innerText=els.file.files.length+' Files';};els.file.onchange=()=>els.info.innerText=els.file.files.length+' Files';}
