@@ -12,11 +12,17 @@
         
         /* アップロードエリア */
         .upload-area { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 20px auto; max-width: 600px; }
+        
+        /* モード切替タブ */
+        .mode-tabs { display: flex; gap: 15px; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .mode-tabs label { font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 5px; color: #555; }
+        .mode-tabs input:checked + span { color: #28a745; text-decoration: underline; }
+
         .row { display: flex; gap: 10px; margin-bottom: 10px; }
         .col { flex: 1; }
         
         label { display: block; font-size: 0.85em; font-weight: bold; color: #166534; margin-bottom: 3px; }
-        input[type="text"], select { padding: 10px; width: 100%; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
+        input[type="text"], select { padding: 10px; width: 100%; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; margin-bottom: 10px;}
         
         button { padding: 12px; width: 100%; background: #28a745; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 1rem; transition: background 0.2s; }
         button:hover { background: #218838; }
@@ -41,6 +47,15 @@
         .folder-item:hover { background: #f0f0f0; border-color: #aaa; }
         .folder-icon { font-size: 2em; display: block; margin-bottom: 5px; }
         
+        /* 編集・削除ボタン */
+        .item-actions { position: absolute; top: 5px; right: 5px; display: flex; gap: 5px; }
+        .action-btn { 
+            width: 24px; height: 24px; border-radius: 50%; font-size: 12px; line-height: 24px; 
+            text-align: center; cursor: pointer; padding: 0; border: none; color: white; z-index: 2; 
+        }
+        .edit-btn { background: #f0ad4e; }
+        .del-btn { background: #d9534f; }
+
         /* 写真・動画アイテム */
         .media-item { overflow: hidden; border-radius: 4px; background: #fff; border: 1px solid #ddd; position: relative; aspect-ratio: 1/1; }
         .media-item img, .media-item video { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -56,31 +71,54 @@
 </head>
 <body>
     <div id="nav-bar">
-        <span>🔒 個人用アルバム (動画対応版)</span>
+        <span>🔒 個人用アルバム</span>
         <a href="/">ショップ管理へ戻る</a>
     </div>
 
     <div class="upload-area">
         <h3 style="margin-top:0;">アルバム作成・追加</h3>
         
-        <div class="row">
-            <div class="col" style="flex: 0 0 80px;">
-                <label>年 (自動)</label>
-                <select id="uploadYear"></select>
+        <div class="mode-tabs">
+            <label><input type="radio" name="upMode" value="new" checked onchange="toggleUploadMode()"> <span>✨ 新規 / 自動分析</span></label>
+            <label><input type="radio" name="upMode" value="existing" onchange="toggleUploadMode()"> <span>📂 既存に追加</span></label>
+        </div>
+
+        <div id="mode-new-container">
+            <div class="row">
+                <div class="col" style="flex: 0 0 80px;">
+                    <label>年 (自動)</label>
+                    <select id="uploadYear"></select>
+                </div>
+                <div class="col" style="flex: 0 0 60px;">
+                    <label>月 (自動)</label>
+                    <select id="uploadMonth"></select>
+                </div>
+                <div class="col">
+                    <label>アルバム名 (例: 2025-05 旅行)</label>
+                    <input type="text" id="albumName" placeholder="日付を入れると自動で年月に振り分けます">
+                </div>
             </div>
-            <div class="col" style="flex: 0 0 60px;">
-                <label>月 (自動)</label>
-                <select id="uploadMonth"></select>
+        </div>
+
+        <div id="mode-existing-container" style="display:none;">
+            <div class="row">
+                <div class="col">
+                    <label>1. 年を選択</label>
+                    <select id="selExistYear"><option value="">-- 年 --</option></select>
+                </div>
+                <div class="col">
+                    <label>2. 月を選択</label>
+                    <select id="selExistMonth" disabled><option value="">-- 月 --</option></select>
+                </div>
             </div>
-            <div class="col">
-                <label>アルバム名 (例: 旅行)</label>
-                <input type="text" id="albumName" placeholder="例: 2025-05 GW旅行">
+            <div style="margin-bottom:10px;">
+                <label>3. アルバムを選択</label>
+                <select id="selExistAlbum" disabled><option value="">-- アルバム --</option></select>
             </div>
         </div>
         
         <div id="dropZone" onclick="document.getElementById('fileInput').click()">
             <div>📸 写真 / 🎥 動画 / 📄 PDF</div>
-            <div style="font-size:0.8em; color:#666; margin-top:5px;">アルバム名の日付を自動分析して<br>フォルダ分けします 📂</div>
             <input type="file" id="fileInput" multiple accept="image/*,video/*,.pdf" style="display:none">
             <div id="fileInfo" style="margin-top:8px; font-weight:bold; color:#d35400;">未選択</div>
         </div>
@@ -102,7 +140,7 @@
         
         // 状態管理
         const state = {
-            view: 'root', // root(年一覧) -> year(月一覧) -> month(アルバム一覧) -> album(写真一覧)
+            view: 'root', // root(年) -> year(月) -> month(アルバム) -> album(ファイル)
             year: null,
             month: null,
             album: null
@@ -111,41 +149,40 @@
         let lightbox;
 
         document.addEventListener('DOMContentLoaded', () => {
-            initDateSelects();
-            renderView();
+            initDateSelects(); // 新規用プルダウン初期化
+            renderView();      // ギャラリー表示
+            loadExistingYears(); // 既存追加用プルダウン初期化
         });
 
-        // --- 1. 日付選択・自動分析ロジック ---
+        // --- UI切り替え ---
+        function toggleUploadMode() {
+            const isNew = document.querySelector('input[name="upMode"]:checked').value === 'new';
+            document.getElementById('mode-new-container').style.display = isNew ? 'block' : 'none';
+            document.getElementById('mode-existing-container').style.display = isNew ? 'none' : 'block';
+        }
+
+        // --- 1. 新規用: 日付選択・自動分析ロジック ---
         function initDateSelects() {
             const yearSel = document.getElementById('uploadYear');
             const monthSel = document.getElementById('uploadMonth');
             const currentYear = new Date().getFullYear();
             
-            // 年: 前後5年
             for(let y = currentYear - 2; y <= currentYear + 3; y++) {
-                const opt = document.createElement('option');
-                opt.value = y; opt.innerText = y + "年";
+                const opt = document.createElement('option'); opt.value = y; opt.innerText = y + "年";
                 if(y === currentYear) opt.selected = true;
                 yearSel.appendChild(opt);
             }
-            // 月: 01-12
             for(let m = 1; m <= 12; m++) {
                 const val = m.toString().padStart(2, '0');
-                const opt = document.createElement('option');
-                opt.value = val; opt.innerText = val + "月";
+                const opt = document.createElement('option'); opt.value = val; opt.innerText = val + "月";
                 if(m === new Date().getMonth() + 1) opt.selected = true;
                 monthSel.appendChild(opt);
             }
 
-            // アルバム名入力時の自動分析
             document.getElementById('albumName').addEventListener('input', (e) => {
                 const val = e.target.value;
-                // 正規表現で年(4桁)と月(1-2桁)を探す
                 const matchYear = val.match(/20\d{2}/);
-                const matchMonth = val.match(/(^|[^0-9])(0?[1-9]|1[0-2])($|[^0-9])/); // 簡易的な月判定
-
                 if (matchYear) yearSel.value = matchYear[0];
-                // 月の判定は難しい（"202501"や"1月"など）が、"-"や"/"区切りを優先
                 const matchDate = val.match(/(\d{4})[-/](\d{1,2})/);
                 if (matchDate) {
                     yearSel.value = matchDate[1];
@@ -154,13 +191,69 @@
             });
         }
 
-        // --- 2. 階層ナビゲーション ---
+        // --- 2. 既存追加用: 連動プルダウン ---
+        async function loadExistingYears() {
+            const sel = document.getElementById('selExistYear');
+            sel.innerHTML = '<option value="">-- 年 --</option>';
+            try {
+                const r = await fetch(`/api/cat2/${CAT1}?type=all`);
+                const data = await r.json();
+                data.forEach(d => {
+                    if(d.name !== 'default_cat2' && d.name !== '-') {
+                        const opt = document.createElement('option'); opt.value = d.name; opt.innerText = d.name + "年";
+                        sel.appendChild(opt);
+                    }
+                });
+            } catch(e) {}
+        }
+
+        document.getElementById('selExistYear').onchange = async (e) => {
+            const y = e.target.value;
+            const mSel = document.getElementById('selExistMonth');
+            const aSel = document.getElementById('selExistAlbum');
+            mSel.innerHTML = '<option>Loading...</option>'; mSel.disabled = true;
+            aSel.innerHTML = '<option>-- アルバム --</option>'; aSel.disabled = true;
+            
+            if(!y) return;
+            try {
+                const r = await fetch(`/api/cat3/${CAT1}/${y}?type=all`);
+                const data = await r.json();
+                mSel.innerHTML = '<option value="">-- 月 --</option>';
+                data.forEach(d => {
+                    if(d.name !== 'default_cat3' && d.name !== '-') {
+                        const opt = document.createElement('option'); opt.value = d.name; opt.innerText = d.name + "月";
+                        mSel.appendChild(opt);
+                    }
+                });
+                mSel.disabled = false;
+            } catch(e){ mSel.innerHTML='<option>Error</option>'; }
+        };
+
+        document.getElementById('selExistMonth').onchange = async (e) => {
+            const m = e.target.value;
+            const y = document.getElementById('selExistYear').value;
+            const aSel = document.getElementById('selExistAlbum');
+            aSel.innerHTML = '<option>Loading...</option>'; aSel.disabled = true;
+            
+            if(!m) return;
+            try {
+                const r = await fetch(`/api/folders/${CAT1}/${y}/${m}`);
+                const data = await r.json();
+                aSel.innerHTML = '<option value="">-- アルバム --</option>';
+                data.forEach(d => {
+                    const opt = document.createElement('option'); opt.value = d.name; opt.innerText = `${d.name} (${d.count})`;
+                    aSel.appendChild(opt);
+                });
+                aSel.disabled = false;
+            } catch(e){ aSel.innerHTML='<option>Error</option>'; }
+        };
+
+        // --- 3. 階層ナビゲーション & 編集削除機能 ---
         async function renderView() {
             const list = document.getElementById('content-list');
             const crumbs = document.getElementById('breadcrumbs');
             list.innerHTML = 'Loading...';
             
-            // パンくずリスト生成
             let html = `<span class="crumb" onclick="navigate('root')">🏠 Home</span>`;
             if (state.year) html += ` > <span class="crumb" onclick="navigate('year', '${state.year}')">${state.year}年</span>`;
             if (state.month) html += ` > <span class="crumb" onclick="navigate('month', '${state.year}', '${state.month}')">${state.month}月</span>`;
@@ -169,31 +262,35 @@
 
             try {
                 if (state.view === 'root') {
-                    // 年一覧 (Cat2)
                     const r = await fetch(`/api/cat2/${CAT1}?type=all`);
                     const data = await r.json();
                     list.innerHTML = '';
                     if (data.length === 0) list.innerHTML = '<p>データがありません</p>';
-                    data.forEach(d => createFolderItem(d.name + "年", () => navigate('year', d.name), d.count));
+                    // Home画面 (年一覧) にも編集・削除を追加
+                    data.forEach(d => {
+                        if(d.name==='default_cat2' || d.name==='-') return;
+                        createFolderItem(d.name + "年", () => navigate('year', d.name), d.count, 2, d.name);
+                    });
 
                 } else if (state.view === 'year') {
-                    // 月一覧 (Cat3)
                     const r = await fetch(`/api/cat3/${CAT1}/${state.year}?type=all`);
                     const data = await r.json();
                     list.innerHTML = '';
-                    if (data.length === 0) list.innerHTML = '<p>フォルダがありません</p>';
-                    data.forEach(d => createFolderItem(d.name + "月", () => navigate('month', state.year, d.name), d.count));
+                    data.forEach(d => {
+                        if(d.name==='default_cat3' || d.name==='-') return;
+                        createFolderItem(d.name + "月", () => navigate('month', state.year, d.name), d.count, 3, d.name);
+                    });
 
                 } else if (state.view === 'month') {
-                    // アルバム一覧 (Folder)
                     const r = await fetch(`/api/folders/${CAT1}/${state.year}/${state.month}`);
                     const data = await r.json();
                     list.innerHTML = '';
-                    if (data.length === 0) list.innerHTML = '<p>アルバムがありません</p>';
-                    data.forEach(d => createFolderItem(d.name, () => navigate('album', state.year, state.month, d.name), d.count));
+                    data.forEach(d => {
+                        createFolderItem(d.name, () => navigate('album', state.year, state.month, d.name), d.count, 4, d.name);
+                    });
 
                 } else if (state.view === 'album') {
-                    // 写真・動画一覧 (Files)
+                    // 写真・動画一覧
                     const params = new URLSearchParams({ cat1: CAT1, cat2: state.year, cat3: state.month, folder: state.album });
                     const r = await fetch(`/api/search?${params}`);
                     const data = await r.json();
@@ -206,16 +303,10 @@
                         const isPdf = ['pdf'].includes(ext);
 
                         if (isVideo) {
-                            // 動画: クリックで別タブ再生 (SimpleLightboxは動画対応が複雑なため簡易化)
-                            div.innerHTML = `
-                                <a href="${file.url}" target="_blank">
-                                    <video src="${file.url}#t=0.1" preload="metadata"></video>
-                                    <span class="video-badge">▶ Video</span>
-                                </a>`;
+                            div.innerHTML = `<a href="${file.url}" target="_blank"><video src="${file.url}#t=0.1" preload="metadata"></video><span class="video-badge">▶ Video</span></a>`;
                         } else if (isPdf) {
                             div.innerHTML = `<a href="${file.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em">${file.title.split('/').pop()}</span></a>`;
                         } else {
-                            // 画像
                             div.innerHTML = `<a href="${file.url}" class="lightbox-link"><img src="${file.url}"></a>`;
                         }
                         list.appendChild(div);
@@ -224,49 +315,89 @@
                     if(lightbox) lightbox.destroy();
                     lightbox = new SimpleLightbox('#content-list .lightbox-link');
                 }
-            } catch (e) {
-                console.error(e);
-                list.innerHTML = '<p style="color:red">読み込みエラー</p>';
-            }
+            } catch (e) { list.innerHTML = '<p style="color:red">読み込みエラー</p>'; }
         }
 
         function navigate(view, y=null, m=null, a=null) {
-            state.view = view;
-            state.year = y;
-            state.month = m;
-            state.album = a;
+            state.view = view; state.year = y; state.month = m; state.album = a;
             renderView();
         }
 
-        function createFolderItem(label, onClick, count) {
+        // フォルダ描画 (編集・削除ボタン付き)
+        function createFolderItem(label, onClick, count, level, rawName) {
             const div = document.createElement('div');
             div.className = 'folder-item';
             div.onclick = onClick;
-            div.innerHTML = `<span class="folder-icon">📂</span><b>${label}</b><br><small>(${count} items)</small>`;
+            
+            let btns = '';
+            // レベルに応じて削除・リネーム処理を変える
+            btns = `
+                <div class="item-actions">
+                    <button class="action-btn edit-btn" onclick="event.stopPropagation(); renameItem(${level}, '${rawName}')">✎</button>
+                    <button class="action-btn del-btn" onclick="event.stopPropagation(); deleteItem(${level}, '${rawName}')">×</button>
+                </div>`;
+
+            div.innerHTML = `${btns}<span class="folder-icon">📂</span><b>${label}</b><br><small>(${count} items)</small>`;
             document.getElementById('content-list').appendChild(div);
         }
 
-        // --- 3. アップロード処理 (動画対応 + 圧縮) ---
+        async function renameItem(level, oldName) {
+            const newName = prompt(`「${oldName}」の名前を変更します:`, oldName);
+            if(!newName || newName === oldName) return;
+            
+            let url = '';
+            // level: 2=年(cat2), 3=月(cat3), 4=アルバム(folder)
+            if(level===2) url = `/api/cat2/${CAT1}/${encodeURIComponent(oldName)}`;
+            if(level===3) url = `/api/cat3/${CAT1}/${state.year}/${encodeURIComponent(oldName)}`;
+            if(level===4) url = `/api/folder/${encodeURIComponent(oldName)}`; // フォルダ名はユニーク前提のAPIになっている
+
+            try {
+                const r = await fetch(url, { method: 'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({newName: newName}) });
+                if(r.ok) { alert('変更しました'); renderView(); loadExistingYears(); } 
+                else alert('変更できませんでした');
+            } catch(e){ alert('エラー'); }
+        }
+
+        async function deleteItem(level, name) {
+            if(!confirm(`「${name}」と、その中身を全て削除しますか？\nこの操作は元に戻せません。`)) return;
+            
+            let url = '';
+            if(level===2) url = `/api/cat2/${CAT1}/${encodeURIComponent(name)}`;
+            if(level===3) url = `/api/cat3/${CAT1}/${state.year}/${encodeURIComponent(name)}`;
+            if(level===4) url = `/api/personal/album/${encodeURIComponent(name)}`;
+
+            try {
+                const r = await fetch(url, { method: 'DELETE' });
+                if(r.ok) { alert('削除しました'); renderView(); loadExistingYears(); }
+                else alert('削除できませんでした');
+            } catch(e){ alert('エラー'); }
+        }
+
+        // --- 4. アップロード処理 ---
         const fileInput = document.getElementById('fileInput');
         fileInput.onchange = () => document.getElementById('fileInfo').innerText = `${fileInput.files.length}ファイル 選択中`;
 
         const compressImage = (file) => {
             return new Promise((resolve) => {
-                // 動画やPDFは圧縮しない
                 if (!file.type.startsWith('image/')) return resolve(file);
-                
-                new Compressor(file, {
-                    quality: 0.6, maxWidth: 1920, maxHeight: 1920,
-                    success(result) { resolve(result); },
-                    error(err) { console.error(err); resolve(file); }
-                });
+                new Compressor(file, { quality: 0.6, maxWidth: 1920, maxHeight: 1920, success(r){ resolve(r); }, error(){ resolve(file); } });
             });
         };
 
         document.getElementById('uploadBtn').onclick = async () => {
-            const year = document.getElementById('uploadYear').value;
-            const month = document.getElementById('uploadMonth').value;
-            const album = document.getElementById('albumName').value.trim() || '未分類';
+            const isNew = document.querySelector('input[name="upMode"]:checked').value === 'new';
+            let year, month, album;
+
+            if (isNew) {
+                year = document.getElementById('uploadYear').value;
+                month = document.getElementById('uploadMonth').value;
+                album = document.getElementById('albumName').value.trim() || '未分類';
+            } else {
+                year = document.getElementById('selExistYear').value;
+                month = document.getElementById('selExistMonth').value;
+                album = document.getElementById('selExistAlbum').value;
+                if(!year || !month || !album) return alert('追加先のアルバムを選択してください');
+            }
             
             if (fileInput.files.length === 0) return alert('ファイルを選択してください');
 
@@ -278,11 +409,10 @@
             try {
                 const fd = new FormData();
                 fd.append('category1', CAT1);
-                fd.append('category2', year);  // 年
-                fd.append('category3', month); // 月
-                fd.append('folderName', album); // アルバム名
+                fd.append('category2', year);
+                fd.append('category3', month);
+                fd.append('folderName', album);
 
-                // 並列圧縮 (動画はスルー)
                 const processedFiles = await Promise.all(Array.from(fileInput.files).map(f => compressImage(f)));
                 processedFiles.forEach(f => fd.append('imageFiles', f, f.name));
 
@@ -293,15 +423,10 @@
                 stat.style.color = 'green';
                 fileInput.value = ''; 
                 document.getElementById('fileInfo').innerText = '未選択';
-                document.getElementById('albumName').value = '';
+                if(isNew) document.getElementById('albumName').value = '';
                 
-                // 現在のビューがアップロード先と同じならリロード
-                if (state.year == year && state.month == month) {
-                    renderView();
-                } else {
-                    // 違う場所ならルートに戻る（更新を見せるため）
-                    navigate('root');
-                }
+                if (state.year == year && state.month == month) renderView();
+                else navigate('root'); // 一覧更新のためホームへ
 
             } catch(e) { 
                 stat.innerText = 'エラー'; stat.style.color = 'red'; 
