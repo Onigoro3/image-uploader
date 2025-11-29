@@ -10,13 +10,13 @@
         #nav-bar { padding: 10px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ccc; background: #fff; }
         a { color: #007bff; text-decoration: none; }
         
-        /* アップロードエリアのスタイル強化 */
+        /* アップロードエリア */
         .upload-area { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 20px auto; max-width: 600px; }
+        .row { display: flex; gap: 10px; margin-bottom: 10px; }
+        .col { flex: 1; }
         
-        .mode-switch { display: flex; gap: 15px; margin-bottom: 15px; }
-        .mode-switch label { cursor: pointer; display: flex; align-items: center; gap: 5px; font-weight: bold; }
-        
-        input[type="text"], select { padding: 10px; width: 100%; box-sizing: border-box; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
+        label { display: block; font-size: 0.85em; font-weight: bold; color: #166534; margin-bottom: 3px; }
+        input[type="text"], select { padding: 10px; width: 100%; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
         
         button { padding: 12px; width: 100%; background: #28a745; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 1rem; transition: background 0.2s; }
         button:hover { background: #218838; }
@@ -25,57 +25,63 @@
         #dropZone { border: 2px dashed #ffc107; padding: 30px; text-align: center; background: #fffbea; cursor: pointer; margin-bottom: 15px; border-radius: 8px; transition: background 0.2s; }
         #dropZone:hover { background: #fff3cd; }
         
-        /* アルバムリスト */
-        #album-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 20px; }
-        .album-folder { 
+        /* パンくずリスト */
+        #breadcrumbs { padding: 10px; font-size: 1.1em; color: #555; }
+        .crumb { cursor: pointer; color: #007bff; text-decoration: underline; }
+        .crumb.active { color: #333; text-decoration: none; cursor: default; font-weight: bold; }
+
+        /* リスト表示 */
+        #content-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 10px; }
+        
+        .folder-item { 
             position: relative; background: #fff; border: 1px solid #ddd; padding: 10px; 
             text-align: center; cursor: pointer; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: background 0.1s;
         }
-        .album-folder:hover { background: #f0f0f0; border-color: #aaa; }
-        .btn-icon { position: absolute; top: 5px; width: 24px; height: 24px; border-radius: 50%; font-size: 12px; line-height: 24px; text-align: center; cursor: pointer; padding: 0; border: none; color: white; z-index: 2; }
-        .delete-btn { right: 5px; background: #dc3545; }
-        .download-btn { right: 35px; background: #007bff; }
-
-        /* 写真リスト */
-        #photo-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 5px; margin-top: 20px; }
-        .photo-item { overflow: hidden; border-radius: 4px; background: #fff; border: 1px solid #ddd; position: relative; }
-        .photo-item img { width: 100%; aspect-ratio: 1/1; object-fit: cover; display: block; }
+        .folder-item:hover { background: #f0f0f0; border-color: #aaa; }
+        .folder-icon { font-size: 2em; display: block; margin-bottom: 5px; }
         
-        .pdf-icon { 
-            width: 100%; aspect-ratio: 1/1; display: flex; flex-direction: column; 
-            justify-content: center; align-items: center; background: #ffecec; color: #d32f2f; 
-            font-weight: bold; font-size: 0.8em; text-decoration: none;
+        /* 写真・動画アイテム */
+        .media-item { overflow: hidden; border-radius: 4px; background: #fff; border: 1px solid #ddd; position: relative; aspect-ratio: 1/1; }
+        .media-item img, .media-item video { width: 100%; height: 100%; object-fit: cover; display: block; }
+        
+        .video-badge {
+            position: absolute; bottom: 5px; right: 5px; background: rgba(0,0,0,0.6); color: #fff;
+            padding: 2px 6px; border-radius: 4px; font-size: 0.7em; pointer-events: none;
         }
+        
+        /* PDFアイコン */
+        .pdf-icon { width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #ffecec; color: #d32f2f; font-weight: bold; font-size: 0.8em; text-decoration: none; }
     </style>
 </head>
 <body>
     <div id="nav-bar">
-        <span>🔒 個人用アルバム</span>
+        <span>🔒 個人用アルバム (動画対応版)</span>
         <a href="/">ショップ管理へ戻る</a>
     </div>
 
     <div class="upload-area">
         <h3 style="margin-top:0;">アルバム作成・追加</h3>
         
-        <div class="mode-switch">
-            <label><input type="radio" name="albumMode" value="new" checked onclick="toggleMode()"> ✨ 新規作成</label>
-            <label><input type="radio" name="albumMode" value="existing" onclick="toggleMode()"> 📂 既存に追加</label>
-        </div>
-
-        <div id="newAlbumInput">
-            <input type="text" id="albumName" placeholder="新しいアルバム名 (例: 京都旅行2025)">
-        </div>
-
-        <div id="existingAlbumInput" style="display:none;">
-            <select id="existingAlbumSelect">
-                <option value="">アルバムを選択してください</option>
-            </select>
+        <div class="row">
+            <div class="col" style="flex: 0 0 80px;">
+                <label>年 (自動)</label>
+                <select id="uploadYear"></select>
+            </div>
+            <div class="col" style="flex: 0 0 60px;">
+                <label>月 (自動)</label>
+                <select id="uploadMonth"></select>
+            </div>
+            <div class="col">
+                <label>アルバム名 (例: 旅行)</label>
+                <input type="text" id="albumName" placeholder="例: 2025-05 GW旅行">
+            </div>
         </div>
         
         <div id="dropZone" onclick="document.getElementById('fileInput').click()">
-            <div>📸 写真/PDFを選択</div>
-            <div style="font-size:0.8em; color:#666; margin-top:5px;">スマホ写真は自動圧縮され<br>高速アップロードされます 🚀</div>
-            <input type="file" id="fileInput" multiple accept="image/*,.pdf" style="display:none">
+            <div>📸 写真 / 🎥 動画 / 📄 PDF</div>
+            <div style="font-size:0.8em; color:#666; margin-top:5px;">アルバム名の日付を自動分析して<br>フォルダ分けします 📂</div>
+            <input type="file" id="fileInput" multiple accept="image/*,video/*,.pdf" style="display:none">
             <div id="fileInfo" style="margin-top:8px; font-weight:bold; color:#d35400;">未選択</div>
         </div>
 
@@ -84,205 +90,221 @@
     </div>
 
     <hr>
-    <div style="padding: 10px;">
-        <h3 style="margin-bottom:10px;">アルバム一覧</h3>
-        <div id="album-list"></div>
-        
-        <h3 id="current-album-title" style="margin-top:30px; display:none; border-bottom:2px solid #ffc107; padding-bottom:5px;"></h3>
-        <div id="photo-list"></div>
-    </div>
+    
+    <div id="breadcrumbs"></div>
+    <div id="content-list" style="padding: 10px;"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/compressorjs/1.2.1/compressor.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js"></script>
+    
     <script>
         const CAT1 = "Private";
-        const CAT2 = "Album";
-        const CAT3 = "Photo";
-        let currentAlbum = null;
+        
+        // 状態管理
+        const state = {
+            view: 'root', // root(年一覧) -> year(月一覧) -> month(アルバム一覧) -> album(写真一覧)
+            year: null,
+            month: null,
+            album: null
+        };
+
         let lightbox;
-        let allAlbums = []; // アルバム名リスト保持用
 
-        document.addEventListener('DOMContentLoaded', loadAlbums);
+        document.addEventListener('DOMContentLoaded', () => {
+            initDateSelects();
+            renderView();
+        });
 
-        function toggleMode() {
-            const mode = document.querySelector('input[name="albumMode"]:checked').value;
-            if(mode === 'new') {
-                document.getElementById('newAlbumInput').style.display = 'block';
-                document.getElementById('existingAlbumInput').style.display = 'none';
-            } else {
-                document.getElementById('newAlbumInput').style.display = 'none';
-                document.getElementById('existingAlbumInput').style.display = 'block';
-                updateSelectOptions(); // プルダウン更新
+        // --- 1. 日付選択・自動分析ロジック ---
+        function initDateSelects() {
+            const yearSel = document.getElementById('uploadYear');
+            const monthSel = document.getElementById('uploadMonth');
+            const currentYear = new Date().getFullYear();
+            
+            // 年: 前後5年
+            for(let y = currentYear - 2; y <= currentYear + 3; y++) {
+                const opt = document.createElement('option');
+                opt.value = y; opt.innerText = y + "年";
+                if(y === currentYear) opt.selected = true;
+                yearSel.appendChild(opt);
+            }
+            // 月: 01-12
+            for(let m = 1; m <= 12; m++) {
+                const val = m.toString().padStart(2, '0');
+                const opt = document.createElement('option');
+                opt.value = val; opt.innerText = val + "月";
+                if(m === new Date().getMonth() + 1) opt.selected = true;
+                monthSel.appendChild(opt);
+            }
+
+            // アルバム名入力時の自動分析
+            document.getElementById('albumName').addEventListener('input', (e) => {
+                const val = e.target.value;
+                // 正規表現で年(4桁)と月(1-2桁)を探す
+                const matchYear = val.match(/20\d{2}/);
+                const matchMonth = val.match(/(^|[^0-9])(0?[1-9]|1[0-2])($|[^0-9])/); // 簡易的な月判定
+
+                if (matchYear) yearSel.value = matchYear[0];
+                // 月の判定は難しい（"202501"や"1月"など）が、"-"や"/"区切りを優先
+                const matchDate = val.match(/(\d{4})[-/](\d{1,2})/);
+                if (matchDate) {
+                    yearSel.value = matchDate[1];
+                    monthSel.value = matchDate[2].padStart(2, '0');
+                }
+            });
+        }
+
+        // --- 2. 階層ナビゲーション ---
+        async function renderView() {
+            const list = document.getElementById('content-list');
+            const crumbs = document.getElementById('breadcrumbs');
+            list.innerHTML = 'Loading...';
+            
+            // パンくずリスト生成
+            let html = `<span class="crumb" onclick="navigate('root')">🏠 Home</span>`;
+            if (state.year) html += ` > <span class="crumb" onclick="navigate('year', '${state.year}')">${state.year}年</span>`;
+            if (state.month) html += ` > <span class="crumb" onclick="navigate('month', '${state.year}', '${state.month}')">${state.month}月</span>`;
+            if (state.album) html += ` > <span class="crumb active">${state.album}</span>`;
+            crumbs.innerHTML = html;
+
+            try {
+                if (state.view === 'root') {
+                    // 年一覧 (Cat2)
+                    const r = await fetch(`/api/cat2/${CAT1}?type=all`);
+                    const data = await r.json();
+                    list.innerHTML = '';
+                    if (data.length === 0) list.innerHTML = '<p>データがありません</p>';
+                    data.forEach(d => createFolderItem(d.name + "年", () => navigate('year', d.name), d.count));
+
+                } else if (state.view === 'year') {
+                    // 月一覧 (Cat3)
+                    const r = await fetch(`/api/cat3/${CAT1}/${state.year}?type=all`);
+                    const data = await r.json();
+                    list.innerHTML = '';
+                    if (data.length === 0) list.innerHTML = '<p>フォルダがありません</p>';
+                    data.forEach(d => createFolderItem(d.name + "月", () => navigate('month', state.year, d.name), d.count));
+
+                } else if (state.view === 'month') {
+                    // アルバム一覧 (Folder)
+                    const r = await fetch(`/api/folders/${CAT1}/${state.year}/${state.month}`);
+                    const data = await r.json();
+                    list.innerHTML = '';
+                    if (data.length === 0) list.innerHTML = '<p>アルバムがありません</p>';
+                    data.forEach(d => createFolderItem(d.name, () => navigate('album', state.year, state.month, d.name), d.count));
+
+                } else if (state.view === 'album') {
+                    // 写真・動画一覧 (Files)
+                    const params = new URLSearchParams({ cat1: CAT1, cat2: state.year, cat3: state.month, folder: state.album });
+                    const r = await fetch(`/api/search?${params}`);
+                    const data = await r.json();
+                    list.innerHTML = '';
+                    
+                    data.forEach(file => {
+                        const div = document.createElement('div'); div.className = 'media-item';
+                        const ext = file.url.split('.').pop().toLowerCase();
+                        const isVideo = ['mp4', 'mov', 'avi', 'webm'].includes(ext);
+                        const isPdf = ['pdf'].includes(ext);
+
+                        if (isVideo) {
+                            // 動画: クリックで別タブ再生 (SimpleLightboxは動画対応が複雑なため簡易化)
+                            div.innerHTML = `
+                                <a href="${file.url}" target="_blank">
+                                    <video src="${file.url}#t=0.1" preload="metadata"></video>
+                                    <span class="video-badge">▶ Video</span>
+                                </a>`;
+                        } else if (isPdf) {
+                            div.innerHTML = `<a href="${file.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em">${file.title.split('/').pop()}</span></a>`;
+                        } else {
+                            // 画像
+                            div.innerHTML = `<a href="${file.url}" class="lightbox-link"><img src="${file.url}"></a>`;
+                        }
+                        list.appendChild(div);
+                    });
+                    
+                    if(lightbox) lightbox.destroy();
+                    lightbox = new SimpleLightbox('#content-list .lightbox-link');
+                }
+            } catch (e) {
+                console.error(e);
+                list.innerHTML = '<p style="color:red">読み込みエラー</p>';
             }
         }
 
-        function updateSelectOptions() {
-            const sel = document.getElementById('existingAlbumSelect');
-            sel.innerHTML = '<option value="">アルバムを選択してください</option>';
-            allAlbums.forEach(name => {
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.innerText = name;
-                sel.appendChild(opt);
-            });
+        function navigate(view, y=null, m=null, a=null) {
+            state.view = view;
+            state.year = y;
+            state.month = m;
+            state.album = a;
+            renderView();
         }
 
-        async function loadAlbums() {
-            const div = document.getElementById('album-list');
-            div.innerHTML = 'Loading...';
-            try {
-                const r = await fetch(`/api/folders/${CAT1}/${CAT2}/${CAT3}`);
-                if(r.status === 401) return window.location.href = '/login';
-                const data = await r.json();
-                
-                div.innerHTML = '';
-                allAlbums = []; // リセット
-
-                if(data.length === 0) div.innerHTML = '<p>アルバムがありません</p>';
-                
-                data.forEach(folder => {
-                    allAlbums.push(folder.name); // 名前を保存
-                    
-                    const el = document.createElement('div');
-                    el.className = 'album-folder';
-                    const label = document.createElement('div');
-                    label.innerHTML = `📁<br><b>${folder.name}</b><br><small>(${folder.count}枚)</small>`;
-                    label.onclick = () => loadPhotos(folder.name);
-                    
-                    const dlBtn = document.createElement('button');
-                    dlBtn.className = 'btn-icon download-btn'; dlBtn.innerText = '⬇️';
-                    dlBtn.title = 'まとめてダウンロード';
-                    dlBtn.onclick = (e) => { e.stopPropagation(); window.location.href = `/api/personal/download/${encodeURIComponent(folder.name)}`; };
-
-                    const delBtn = document.createElement('button');
-                    delBtn.className = 'btn-icon delete-btn'; delBtn.innerText = '×';
-                    delBtn.title = 'アルバム削除';
-                    delBtn.onclick = (e) => { e.stopPropagation(); deleteAlbum(folder.name); };
-
-                    el.appendChild(dlBtn); el.appendChild(delBtn); el.appendChild(label);
-                    div.appendChild(el);
-                });
-                
-                // もし「既存に追加」モードならプルダウンも更新
-                if(document.querySelector('input[name="albumMode"]:checked').value === 'existing') {
-                    updateSelectOptions();
-                }
-
-            } catch(e) { div.innerHTML = '読み込みエラー'; }
+        function createFolderItem(label, onClick, count) {
+            const div = document.createElement('div');
+            div.className = 'folder-item';
+            div.onclick = onClick;
+            div.innerHTML = `<span class="folder-icon">📂</span><b>${label}</b><br><small>(${count} items)</small>`;
+            document.getElementById('content-list').appendChild(div);
         }
 
-        async function deleteAlbum(folderName) {
-            if (!confirm(`アルバム「${folderName}」内の写真をすべて削除しますか？`)) return;
-            try {
-                const r = await fetch(`/api/personal/album/${encodeURIComponent(folderName)}`, { method: 'DELETE' });
-                if (r.ok) { alert('削除しました'); loadAlbums(); if(currentAlbum===folderName){ document.getElementById('photo-list').innerHTML=''; document.getElementById('current-album-title').style.display='none'; } } 
-                else { alert('削除に失敗しました'); }
-            } catch (e) { alert('エラーが発生しました'); }
-        }
-
-        async function loadPhotos(folder) {
-            currentAlbum = folder;
-            const titleEl = document.getElementById('current-album-title');
-            const listEl = document.getElementById('photo-list');
-            titleEl.style.display = 'block'; titleEl.innerText = `📂 ${folder}`; listEl.innerHTML = 'Loading...';
-            
-            const params = new URLSearchParams({ cat1: CAT1, cat2: CAT2, cat3: CAT3, folder: folder });
-            const r = await fetch(`/api/search?${params}`);
-            const data = await r.json();
-            listEl.innerHTML = '';
-            
-            if(data.length === 0) listEl.innerHTML = '<p>写真がありません</p>';
-
-            data.forEach(img => {
-                const name = img.title.split('/').pop();
-                const div = document.createElement('div'); div.className = 'photo-item';
-                if (img.url.toLowerCase().endsWith('.pdf')) {
-                    div.innerHTML = `<a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em">${name}</span></a>`;
-                } else {
-                    div.innerHTML = `<a href="${img.url}" class="lightbox-link"><img src="${img.url}"></a>`;
-                }
-                listEl.appendChild(div);
-            });
-            
-            if(lightbox) lightbox.destroy();
-            lightbox = new SimpleLightbox('#photo-list .lightbox-link');
-            titleEl.scrollIntoView({behavior: "smooth"});
-        }
-
+        // --- 3. アップロード処理 (動画対応 + 圧縮) ---
         const fileInput = document.getElementById('fileInput');
-        fileInput.onchange = () => document.getElementById('fileInfo').innerText = `${fileInput.files.length}枚 選択中`;
+        fileInput.onchange = () => document.getElementById('fileInfo').innerText = `${fileInput.files.length}ファイル 選択中`;
 
-        // 画像圧縮関数 (Promiseラッパー)
         const compressImage = (file) => {
-            return new Promise((resolve, reject) => {
-                // PDFなどは圧縮せずそのまま返す
-                if (!file.type.startsWith('image/')) {
-                    return resolve(file);
-                }
+            return new Promise((resolve) => {
+                // 動画やPDFは圧縮しない
+                if (!file.type.startsWith('image/')) return resolve(file);
+                
                 new Compressor(file, {
-                    quality: 0.6, // 画質60% (十分綺麗)
-                    maxWidth: 1920, // 幅最大1920px
-                    maxHeight: 1920, 
+                    quality: 0.6, maxWidth: 1920, maxHeight: 1920,
                     success(result) { resolve(result); },
-                    error(err) { console.error(err); resolve(file); } // 失敗時は元ファイル
+                    error(err) { console.error(err); resolve(file); }
                 });
             });
         };
 
         document.getElementById('uploadBtn').onclick = async () => {
-            const mode = document.querySelector('input[name="albumMode"]:checked').value;
-            let album = '';
+            const year = document.getElementById('uploadYear').value;
+            const month = document.getElementById('uploadMonth').value;
+            const album = document.getElementById('albumName').value.trim() || '未分類';
             
-            if(mode === 'new') {
-                album = document.getElementById('albumName').value.trim();
-                if(!album) return alert('アルバム名を入力してください');
-            } else {
-                album = document.getElementById('existingAlbumSelect').value;
-                if(!album) return alert('追加先のアルバムを選択してください');
-            }
-
-            if(fileInput.files.length === 0) return alert('写真を選択してください');
+            if (fileInput.files.length === 0) return alert('ファイルを選択してください');
 
             const btn = document.getElementById('uploadBtn');
             const stat = document.getElementById('status');
             btn.disabled = true;
-            stat.innerText = '圧縮＆アップロード中... 🚀';
-            stat.style.color = '#e67e22';
+            stat.innerText = '処理中... 🚀';
 
             try {
                 const fd = new FormData();
-                fd.append('category1', CAT1); fd.append('category2', CAT2); fd.append('category3', CAT3);
-                fd.append('folderName', album);
+                fd.append('category1', CAT1);
+                fd.append('category2', year);  // 年
+                fd.append('category3', month); // 月
+                fd.append('folderName', album); // アルバム名
 
-                // 全ファイルを並列で圧縮処理
-                const compressPromises = Array.from(fileInput.files).map(file => compressImage(file));
-                const processedFiles = await Promise.all(compressPromises);
-
-                for(let f of processedFiles) {
-                    // Blobの場合、元の名前が失われることがあるので第3引数で指定
-                    fd.append('imageFiles', f, f.name); 
-                }
+                // 並列圧縮 (動画はスルー)
+                const processedFiles = await Promise.all(Array.from(fileInput.files).map(f => compressImage(f)));
+                processedFiles.forEach(f => fd.append('imageFiles', f, f.name));
 
                 const r = await fetch('/upload', { method: 'POST', body: fd });
                 if(!r.ok) throw new Error('失敗');
                 
-                stat.innerText = '保存しました！✨';
+                stat.innerText = '完了！✨';
                 stat.style.color = 'green';
-                
                 fileInput.value = ''; 
                 document.getElementById('fileInfo').innerText = '未選択';
-                document.getElementById('albumName').value = ''; // 入力クリア
+                document.getElementById('albumName').value = '';
                 
-                loadAlbums(); // リスト更新
-                
-                // もし現在表示中のアルバムに追加した場合は、写真リストも更新
-                if(currentAlbum === album) {
-                    loadPhotos(album);
+                // 現在のビューがアップロード先と同じならリロード
+                if (state.year == year && state.month == month) {
+                    renderView();
+                } else {
+                    // 違う場所ならルートに戻る（更新を見せるため）
+                    navigate('root');
                 }
 
             } catch(e) { 
-                stat.innerText = 'エラーが発生しました'; 
-                stat.style.color = 'red';
+                stat.innerText = 'エラー'; stat.style.color = 'red'; 
             } finally {
                 btn.disabled = false;
             }

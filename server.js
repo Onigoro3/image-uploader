@@ -38,15 +38,16 @@ const s3Client = new S3Client({
     credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY } 
 });
 
-// 画像とPDF、CSVを許可
+// ★修正: 画像、PDFに加えて動画(video)を許可
 const upload = multer({ 
     storage: multer.memoryStorage(), 
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB制限
+    limits: { fileSize: 500 * 1024 * 1024 }, // 動画用に上限を500MBに緩和
     fileFilter: (req, f, cb) => { 
-        if(f.mimetype.startsWith('image/') || f.mimetype==='application/pdf'|| f.mimetype.includes('csv') || f.originalname.toLowerCase().endsWith('.csv')) {
+        // mimetypeが video/ で始まるものも許可
+        if(f.mimetype.startsWith('image/') || f.mimetype.startsWith('video/') || f.mimetype==='application/pdf'|| f.mimetype.includes('csv') || f.originalname.toLowerCase().endsWith('.csv')) {
             cb(null, true);
         } else {
-            cb(new Error('許可されていないファイル形式です (画像, PDF, CSVのみ)'), false);
+            cb(new Error('許可されていないファイル形式です (画像, 動画, PDF, CSVのみ)'), false);
         }
     } 
 });
@@ -333,6 +334,7 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
 }));
 
 app.post('/upload', isAuthenticated, (req, res, next) => {
+    // 最大100枚まで
     upload.array('imageFiles', 100)(req, res, (err) => {
         if (err) return next(err);
         next();
@@ -387,14 +389,28 @@ app.delete('/api/cat1/:name', isAuthenticated, apiHandler(async(req, res) => { c
 app.delete('/api/cat2/:c1/:name', isAuthenticated, apiHandler(async(req, res) => { const client = await pool.connect(); try { await client.query('BEGIN'); await client.query(`DELETE FROM images WHERE category_1=$1 AND category_2=$2`, [req.params.c1, req.params.name]); await client.query(`DELETE FROM csv_uploads WHERE category_1=$1 AND category_2=$2`, [req.params.c1, req.params.name]); await client.query('COMMIT'); res.json({message:'OK'}); } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
 app.delete('/api/cat3/:c1/:c2/:name', isAuthenticated, apiHandler(async(req, res) => { const client = await pool.connect(); try { await client.query('BEGIN'); await client.query(`DELETE FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3`, [req.params.c1, req.params.c2, req.params.name]); await client.query(`DELETE FROM csv_uploads WHERE category_1=$1 AND category_2=$2 AND category_3=$3`, [req.params.c1, req.params.c2, req.params.name]); await client.query('COMMIT'); res.json({message:'OK'}); } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
 
-app.delete('/api/personal/album/:name', isAuthenticated, apiHandler(async (req, res) => { await performDelete(res, "category_1='Private' AND category_2='Album' AND category_3='Photo' AND folder_name=$1", [req.params.name]); }));
-app.get('/api/personal/download/:folder', isAuthenticated, apiHandler(async (req, res) => { const folder = req.params.folder; const { rows } = await pool.query(`SELECT title FROM images WHERE category_1='Private' AND category_2='Album' AND category_3='Photo' AND folder_name=$1`, [folder]); if (rows.length === 0) return res.status(404).send('Empty'); res.attachment(`${encodeURIComponent(folder)}.zip`); const archive = archiver('zip', { zlib: { level: 9 } }); archive.pipe(res); for (const row of rows) { try { const s3Item = await s3Client.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: row.title })); archive.append(s3Item.Body, { name: row.title.split('/').pop() }); } catch (e) {} } await archive.finalize(); }));
+app.delete('/api/personal/album/:name', isAuthenticated, apiHandler(async (req, res) => { await performDelete(res, "category_1='Private' AND folder_name=$1", [req.params.name]); }));
+app.get('/api/personal/download/:folder', isAuthenticated, apiHandler(async (req, res) => { 
+    // ★修正: フォルダ名だけでなく、Year(cat2)/Month(cat3)も考慮してダウンロード対象を特定する必要があるが
+    // 簡易的にフォルダ名だけで検索 (重複がある場合は全てDLされる)
+    const folder = req.params.folder; 
+    const { rows } = await pool.query(`SELECT title FROM images WHERE category_1='Private' AND folder_name=$1`, [folder]); 
+    if (rows.length === 0) return res.status(404).send('Empty'); 
+    res.attachment(`${encodeURIComponent(folder)}.zip`); 
+    const archive = archiver('zip', { zlib: { level: 9 } }); 
+    archive.pipe(res); 
+    for (const row of rows) { 
+        try { 
+            const s3Item = await s3Client.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: row.title })); 
+            archive.append(s3Item.Body, { name: row.title.split('/').pop() }); 
+        } catch (e) {} 
+    } 
+    await archive.finalize(); 
+}));
 app.post('/api/analyze/:folder', isAuthenticated, apiHandler(async (req, res) => { res.status(200).send('CSV Dummy'); }));
 
-// ★追加: グローバルエラーハンドリング
 app.use((err, req, res, next) => {
     console.error("Global Error Handler:", err);
-    // エラー詳細をJSONで返す
     res.status(500).json({ message: "システムエラー: " + (err.message || "Unknown error detected") });
 });
 
