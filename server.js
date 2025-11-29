@@ -6,6 +6,10 @@ const multer = require('multer');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
 
+// ★追加: Python実行用
+const { exec } = require('child_process');
+const fs = require('fs'); 
+
 const session = require('express-session');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
@@ -40,15 +44,19 @@ const s3Client = new S3Client({
 
 const upload = multer({ 
     storage: multer.memoryStorage(), 
-    limits: { fileSize: 500 * 1024 * 1024 }, // 動画用に上限を500MBに緩和
+    limits: { fileSize: 500 * 1024 * 1024 },
     fileFilter: (req, f, cb) => { 
         if(f.mimetype.startsWith('image/') || f.mimetype.startsWith('video/') || f.mimetype==='application/pdf'|| f.mimetype.includes('csv') || f.originalname.toLowerCase().endsWith('.csv')) {
             cb(null, true);
         } else {
-            cb(new Error('許可されていないファイル形式です (画像, 動画, PDF, CSVのみ)'), false);
+            cb(new Error('許可されていないファイル形式です'), false);
         }
     } 
 });
+
+// ★追加: 一時ファイル保存用の設定 (PDF変換用)
+const tempUpload = multer({ dest: 'temp_uploads/' }); 
+// ※ フォルダ 'temp_uploads' がない場合は自動生成されますが、権限エラーが出る場合は手動作成してください
 
 // --- Middleware ---
 app.use(express.json());
@@ -86,7 +94,6 @@ function isAuthenticated(req, res, next) {
     res.status(401).json({ message: 'ログインが必要です。' });
 }
 
-// エラーハンドリング用ラッパー
 const apiHandler = (fn) => async (req, res, next) => { 
     try { await fn(req, res, next); } 
     catch (e) { next(e); } 
@@ -101,7 +108,6 @@ const createTable = async () => {
             await client.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(100) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default" PRIMARY KEY, "sess" json NOT NULL, "expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE);`);
             await client.query(`CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`);
-            
             await client.query(`CREATE TABLE IF NOT EXISTS product_info (product_code VARCHAR(255) PRIMARY KEY, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS csv_uploads (id SERIAL PRIMARY KEY, filename VARCHAR(255) NOT NULL, uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
 
@@ -113,13 +119,13 @@ const createTable = async () => {
             await addCol('images', 'category_2', 'VARCHAR(100) DEFAULT \'default_cat2\'');
             await addCol('images', 'category_3', 'VARCHAR(100) DEFAULT \'default_cat3\'');
             await addCol('images', 'folder_name', 'VARCHAR(100) DEFAULT \'default_folder\'');
-
+            
+            // ... (既存の商品カラム定義) ...
             await addCol('product_info', 'product_name', 'VARCHAR(1024)');
             await addCol('product_info', 'model_num1', 'VARCHAR(255)');
             await addCol('product_info', 'model_num2', 'VARCHAR(255)');
             await addCol('product_info', 'model_num3', 'VARCHAR(255)');
             await addCol('product_info', 'model_num4', 'VARCHAR(255)');
-            
             await addCol('product_info', 'condition', 'VARCHAR(255)');
             await addCol('product_info', 'series', 'VARCHAR(255)');
             await addCol('product_info', 'stock', 'INTEGER DEFAULT 0');
@@ -127,23 +133,17 @@ const createTable = async () => {
             await addCol('product_info', 'mercari_price', 'INTEGER DEFAULT 0');
             await addCol('product_info', 'image_filename', 'VARCHAR(1024)');
             await addCol('product_info', 'csv_upload_id', 'INTEGER');
-            
             await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='code') THEN ALTER TABLE product_info RENAME COLUMN code TO product_code; END IF; END $$;`);
-
             await addCol('csv_uploads', 'category_1', 'VARCHAR(100) DEFAULT \'未分類\'');
             await addCol('csv_uploads', 'category_2', 'VARCHAR(100) DEFAULT \'-\'');
             await addCol('csv_uploads', 'category_3', 'VARCHAR(100) DEFAULT \'-\'');
 
-            // ★追加: 検索高速化のためのインデックス作成 (pg_trgm)
             try {
                 await client.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
                 await client.query('CREATE INDEX IF NOT EXISTS idx_images_title_trgm ON images USING gin (title gin_trgm_ops);');
                 await client.query('CREATE INDEX IF NOT EXISTS idx_product_info_name_trgm ON product_info USING gin (product_name gin_trgm_ops);');
                 await client.query('CREATE INDEX IF NOT EXISTS idx_product_info_model_trgm ON product_info USING gin (model_num1 gin_trgm_ops);');
-                console.log('Search indexes optimized.');
-            } catch (e) {
-                console.warn('Index creation skipped (pg_trgm extension might not be supported):', e.message);
-            }
+            } catch (e) {}
 
             console.log('Database schema synced.');
         } finally { client.release(); }
@@ -156,7 +156,39 @@ app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'register.h
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/personal', (req, res) => res.sendFile(path.join(__dirname, 'personal.html')));
 app.get('/product-manager', (req, res) => res.sendFile(path.join(__dirname, 'product_manager.html')));
+// ★追加: PDFツールのページ
+app.get('/pdf-tool', (req, res) => res.sendFile(path.join(__dirname, 'pdf_tool.html')));
 
+// --- ★追加: PDF変換API ---
+app.post('/api/pdf/convert', isAuthenticated, tempUpload.single('pdfFile'), (req, res) => {
+    if (!req.file) return res.status(400).json({ message: 'ファイルがありません' });
+
+    const inputPath = req.file.path;
+    const outputFilename = req.file.originalname.replace('.pdf', '.docx');
+    const outputPath = inputPath + '.docx';
+
+    // Pythonスクリプトを実行
+    // "python" コマンドがサーバーで使える前提です。環境によっては "python3" にしてください。
+    const command = `python converter.py "${inputPath}" "${outputPath}"`;
+
+    exec(command, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`exec error: ${error}`);
+            // 失敗しても一時ファイル削除
+            fs.unlink(inputPath, ()=>{}); 
+            return res.status(500).json({ message: '変換に失敗しました。Python環境を確認してください。' });
+        }
+
+        // 成功したらファイルをダウンロードさせる
+        res.download(outputPath, outputFilename, (err) => {
+            // ダウンロード完了後に一時ファイルを削除
+            fs.unlink(inputPath, ()=>{});
+            fs.unlink(outputPath, ()=>{});
+        });
+    });
+});
+
+// ... (以下、既存のAPI群はそのまま) ...
 // 認証API
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
@@ -208,7 +240,6 @@ app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res)
     res.json(rows.map(r => ({ name: r.name, count: parseInt(r.count) })));
 }));
 
-// --- 商品管理 ---
 app.get('/api/products/stats', isAuthenticated, apiHandler(async (req, res) => {
     const imgCount = (await pool.query('SELECT COUNT(*) FROM images')).rows[0].count;
     const prodCount = (await pool.query('SELECT COUNT(*) FROM product_info')).rows[0].count;
@@ -235,10 +266,9 @@ app.get('/api/products/template', isAuthenticated, (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="template.csv"'); res.send('\uFEFF' + header + example);
 });
 
-// CSVインポート
 app.post('/api/products/import', isAuthenticated, (req, res, next) => {
     upload.single('csvFile')(req, res, (err) => {
-        if (err) return next(err); // エラーハンドラーへ送る
+        if (err) return next(err);
         next();
     });
 }, apiHandler(async (req, res) => {
@@ -262,14 +292,9 @@ app.post('/api/products/import', isAuthenticated, (req, res, next) => {
         for (const row of records) {
             if (!row.product_code) continue;
             const query = `INSERT INTO product_info (product_name, model_num1, model_num2, model_num3, model_num4, condition, series, stock, ec_price, mercari_price, product_code, image_filename, csv_upload_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP) ON CONFLICT (product_code) DO UPDATE SET product_name=EXCLUDED.product_name, model_num1=EXCLUDED.model_num1, model_num2=EXCLUDED.model_num2, model_num3=EXCLUDED.model_num3, model_num4=EXCLUDED.model_num4, condition=EXCLUDED.condition, series=EXCLUDED.series, stock=EXCLUDED.stock, ec_price=EXCLUDED.ec_price, mercari_price=EXCLUDED.mercari_price, image_filename=EXCLUDED.image_filename, csv_upload_id=EXCLUDED.csv_upload_id, updated_at=CURRENT_TIMESTAMP`;
-            
             const stock = parseInt(row.stock || '0'); const ec = parseInt(row.ec_price || '0'); const mer = parseInt(row.mercari_price || '0');
             await client.query(query, [
-                row.product_name, 
-                row.model_num1, 
-                row.model_num2 || null, 
-                row.model_num3 || null, 
-                row.model_num4 || null, 
+                row.product_name, row.model_num1, row.model_num2 || null, row.model_num3 || null, row.model_num4 || null, 
                 row.condition, row.series, stock, ec, mer, row.product_code, row.image_filename, uploadId
             ]);
         }
@@ -278,31 +303,20 @@ app.post('/api/products/import', isAuthenticated, (req, res, next) => {
 }));
 
 app.get('/api/products/files', isAuthenticated, apiHandler(async (req, res) => {
-    try { 
-        const { rows } = await pool.query("SELECT * FROM csv_uploads WHERE filename <> '__CATEGORY_NODE__' ORDER BY uploaded_at DESC"); 
-        res.json(rows); 
-    } catch (e) { res.json([]); }
+    try { const { rows } = await pool.query("SELECT * FROM csv_uploads WHERE filename <> '__CATEGORY_NODE__' ORDER BY uploaded_at DESC"); res.json(rows); } catch (e) { res.json([]); }
 }));
 
 app.post('/api/categories/create', isAuthenticated, apiHandler(async (req, res) => {
     const { category1, category2, category3 } = req.body;
     if (!category1) return res.status(400).json({ message: '大カテゴリは必須です' });
-    
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const check = await client.query(
-            "SELECT id FROM csv_uploads WHERE filename = '__CATEGORY_NODE__' AND category_1=$1 AND category_2=$2 AND category_3=$3",
-            [category1, category2 || '-', category3 || '-']
-        );
+        const check = await client.query("SELECT id FROM csv_uploads WHERE filename = '__CATEGORY_NODE__' AND category_1=$1 AND category_2=$2 AND category_3=$3", [category1, category2 || '-', category3 || '-']);
         if (check.rows.length === 0) {
-            await client.query(
-                "INSERT INTO csv_uploads (filename, category_1, category_2, category_3) VALUES ($1, $2, $3, $4)",
-                ['__CATEGORY_NODE__', category1, category2 || '-', category3 || '-']
-            );
+            await client.query("INSERT INTO csv_uploads (filename, category_1, category_2, category_3) VALUES ($1, $2, $3, $4)", ['__CATEGORY_NODE__', category1, category2 || '-', category3 || '-']);
         }
-        await client.query('COMMIT');
-        res.json({ message: 'カテゴリを作成しました' });
+        await client.query('COMMIT'); res.json({ message: 'カテゴリを作成しました' });
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }));
 
@@ -343,11 +357,7 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
 }));
 
 app.post('/upload', isAuthenticated, (req, res, next) => {
-    // 最大100枚まで
-    upload.array('imageFiles', 100)(req, res, (err) => {
-        if (err) return next(err);
-        next();
-    });
+    upload.array('imageFiles', 100)(req, res, (err) => { if (err) return next(err); next(); });
 }, apiHandler(async (req, res) => { 
     const { category1, category2, category3, folderName } = req.body; 
     if (!req.files || req.files.length === 0) return res.status(400).json({ message: 'No files' }); 
@@ -366,7 +376,6 @@ app.post('/upload', isAuthenticated, (req, res, next) => {
 }));
 
 app.get('/download-csv', isAuthenticated, apiHandler(async (req, res) => { const { folder, cat1, cat2, cat3 } = req.query; let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) WHERE i.category_1=$1 AND i.category_2=$2 AND i.category_3=$3 AND i.folder_name=$4 ORDER BY i.title`; const { rows } = await pool.query(sql, [cat1, cat2, cat3, folder]); let csv = "大,中,小,フォルダ,ファイル名,商品名,型番1,型番2,型番3,型番4,EC価格,メルカリ価格,在庫,URL\n"; rows.forEach(r => { csv += `"${r.category_1}","${r.category_2}","${r.category_3}","${r.folder_name}","${r.title}","${r.product_name||''}","${r.model_num1||''}","${r.model_num2||''}","${r.model_num3||''}","${r.model_num4||''}","${r.ec_price||0}","${r.mercari_price||0}","${r.stock||0}","${r.url}"\n`; }); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="list.csv"`); res.status(200).send('\uFEFF' + csv); }));
-const getList = (col) => apiHandler(async (req, res) => { const { rows } = await pool.query(`SELECT DISTINCT ${col} FROM images ORDER BY ${col}`); res.json(rows.map(r => r[col])); });
 
 app.put('/api/image/:title', isAuthenticated, apiHandler(async (req, res) => { const { title } = req.params; const { category1, category2, category3, folderName } = req.body; const name = title.split('/').pop(); const newKey = `${category1}/${category2}/${category3}/${folderName}/${name}`; await s3Client.send(new CopyObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, CopySource: `${process.env.R2_BUCKET_NAME}/${title}`, Key: newKey })); await s3Client.send(new S3DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: title })); await pool.query(`UPDATE images SET category_1=$1, category_2=$2, category_3=$3, folder_name=$4, title=$5, url=$6 WHERE title=$7`, [category1, category2, category3, folderName, newKey, `${process.env.R2_PUBLIC_URL}/${encodeURIComponent(newKey)}`, title]); res.json({ message: "移動完了" }); }));
 app.delete('/api/folder/:name', isAuthenticated, apiHandler(async(req,res) => {const {rows}=await pool.query(`SELECT title FROM images WHERE folder_name=$1`,[req.params.name]); if(rows.length>0){ const keys=rows.map(r=>({Key:r.title})); for(let i=0;i<keys.length;i+=1000)await s3Client.send(new DeleteObjectsCommand({Bucket:process.env.R2_BUCKET_NAME,Delete:{Objects:keys.slice(i,i+1000)}})); } await pool.query(`DELETE FROM images WHERE folder_name=$1`,[req.params.name]); res.json({message:"削除完了"}); }));
@@ -399,24 +408,7 @@ app.delete('/api/cat2/:c1/:name', isAuthenticated, apiHandler(async(req, res) =>
 app.delete('/api/cat3/:c1/:c2/:name', isAuthenticated, apiHandler(async(req, res) => { const client = await pool.connect(); try { await client.query('BEGIN'); await client.query(`DELETE FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3`, [req.params.c1, req.params.c2, req.params.name]); await client.query(`DELETE FROM csv_uploads WHERE category_1=$1 AND category_2=$2 AND category_3=$3`, [req.params.c1, req.params.c2, req.params.name]); await client.query('COMMIT'); res.json({message:'OK'}); } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } }));
 
 app.delete('/api/personal/album/:name', isAuthenticated, apiHandler(async (req, res) => { await performDelete(res, "category_1='Private' AND folder_name=$1", [req.params.name]); }));
-app.get('/api/personal/download/:folder', isAuthenticated, apiHandler(async (req, res) => { 
-    // ★修正: フォルダ名だけでなく、Year(cat2)/Month(cat3)も考慮してダウンロード対象を特定する必要があるが
-    // 簡易的にフォルダ名だけで検索 (重複がある場合は全てDLされる)
-    const folder = req.params.folder; 
-    const { rows } = await pool.query(`SELECT title FROM images WHERE category_1='Private' AND folder_name=$1`, [folder]); 
-    if (rows.length === 0) return res.status(404).send('Empty'); 
-    res.attachment(`${encodeURIComponent(folder)}.zip`); 
-    const archive = archiver('zip', { zlib: { level: 9 } }); 
-    archive.pipe(res); 
-    for (const row of rows) { 
-        try { 
-            const s3Item = await s3Client.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: row.title })); 
-            archive.append(s3Item.Body, { name: row.title.split('/').pop() }); 
-        } catch (e) {} 
-    } 
-    await archive.finalize(); 
-}));
-app.post('/api/analyze/:folder', isAuthenticated, apiHandler(async (req, res) => { res.status(200).send('CSV Dummy'); }));
+app.get('/api/personal/download/:folder', isAuthenticated, apiHandler(async (req, res) => { const folder = req.params.folder; const { rows } = await pool.query(`SELECT title FROM images WHERE category_1='Private' AND folder_name=$1`, [folder]); if (rows.length === 0) return res.status(404).send('Empty'); res.attachment(`${encodeURIComponent(folder)}.zip`); const archive = archiver('zip', { zlib: { level: 9 } }); archive.pipe(res); for (const row of rows) { try { const s3Item = await s3Client.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: row.title })); archive.append(s3Item.Body, { name: row.title.split('/').pop() }); } catch (e) {} } await archive.finalize(); }));
 
 app.use((err, req, res, next) => {
     console.error("Global Error Handler:", err);

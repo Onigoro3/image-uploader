@@ -25,6 +25,8 @@
         #personal-btn { background: #0ea5e9; }
         #logoutButton { background: #dc2626; }
         #fix-db-btn { background: #ca8a04; color: #fff !important; }
+        /* PDFボタン用スタイル */
+        #pdf-btn { background: #db2777; } 
 
         #main-content { margin-top: 70px; max-width: 1200px; margin-left: auto; margin-right: auto; }
         
@@ -92,7 +94,7 @@
         .edit-btn { background: none; border: none; cursor: pointer; color: #cbd5e1; font-size: 1.1em; padding: 0 5px; line-height: 1; }
         .edit-btn:hover { color: #f59e0b; }
         
-        /* 検索エリアのスタイル修正 */
+        /* 検索エリア */
         #search-section { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
         #searchBtn { background: #15803d; color: white; padding: 10px 20px; width: auto; margin-bottom: 0; }
         #searchBtn:hover { opacity: 0.9; }
@@ -141,6 +143,7 @@
         <button id="fix-db-btn" title="テーブル修復">⚠️DB修復</button>
         <button id="manager-btn" onclick="location.href='/product-manager'">商品管理</button>
         <button id="personal-btn" onclick="location.href='/personal'">個人アルバム</button>
+        <button id="pdf-btn" onclick="location.href='/pdf-tool'">📑 PDF変換</button>
         <button id="logoutButton">ログアウト</button>
     </div>
 
@@ -245,8 +248,9 @@
             loadCat1(); setupDropZone(); setupSelects();
             els.upBtn.onclick = uploadFiles;
             
-            // 変更: 自動検索を廃止し、ボタンまたはEnterキーで検索実行
+            // 検索ボタンクリックで実行
             els.searchBtn.onclick = () => loadImages(sels.f, els.search.value);
+            // Enterキーでも実行
             els.search.onkeydown = (e) => {
                 if(e.key === 'Enter') {
                     e.preventDefault();

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to Word 変換ツール</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #fdf2f8; color: #333; text-align: center; }
+        .container { max-width: 500px; margin: 50px auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        h1 { color: #db2777; margin-bottom: 20px; }
+        p { font-size: 0.9rem; color: #666; margin-bottom: 25px; }
+        
+        #dropZone { border: 2px dashed #db2777; padding: 40px; border-radius: 10px; cursor: pointer; background: #fff5f9; transition: 0.2s; }
+        #dropZone:hover { background: #fce7f3; }
+        
+        button { margin-top: 20px; padding: 12px 30px; font-size: 1rem; background: #db2777; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; }
+        button:hover { background: #be185d; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        
+        #status { margin-top: 15px; font-weight: bold; min-height: 1.2em; }
+        a.back-link { display: block; margin-top: 20px; color: #db2777; text-decoration: none; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>📑 PDF to Word 変換</h1>
+        <p>PDFをアップロードすると、レイアウトを維持したまま<br>Wordファイル(.docx)に変換してダウンロードします。</p>
+
+        <div id="dropZone" onclick="document.getElementById('pdfInput').click()">
+            📄 クリックしてPDFを選択
+            <input type="file" id="pdfInput" accept=".pdf" style="display:none;">
+            <div id="fileInfo" style="margin-top:10px; font-weight:bold; color:#be185d;">未選択</div>
+        </div>
+
+        <button id="convertBtn">変換してダウンロード</button>
+        <div id="status"></div>
+
+        <a href="/" class="back-link">← 画像アップローダーに戻る</a>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('pdfInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const convertBtn = document.getElementById('convertBtn');
+        const status = document.getElementById('status');
+
+        fileInput.onchange = () => {
+            if(fileInput.files.length > 0) {
+                fileInfo.textContent = fileInput.files[0].name;
+            }
+        };
+
+        convertBtn.onclick = async () => {
+            if(fileInput.files.length === 0) return alert('PDFファイルを選択してください');
+
+            convertBtn.disabled = true;
+            status.textContent = "変換中... 少し時間がかかります ⏳";
+            status.style.color = "#d97706";
+
+            const fd = new FormData();
+            fd.append('pdfFile', fileInput.files[0]);
+
+            try {
+                const res = await fetch('/api/pdf/convert', { method: 'POST', body: fd });
+                
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.message || '変換エラー');
+                }
+
+                // ファイルダウンロード処理 (Blobとして受け取る)
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileInput.files[0].name.replace('.pdf', '.docx');
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+
+                status.textContent = "ダウンロード完了！🎉";
+                status.style.color = "green";
+            } catch (e) {
+                console.error(e);
+                status.textContent = "エラー: " + e.message;
+                status.style.color = "red";
+            } finally {
+                convertBtn.disabled = false;
+            }
+        };
+    </script>
+</body>
+</html>
