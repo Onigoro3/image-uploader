@@ -3,35 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF to Word 変換ツール</title>
+    <title>PDF 変換ツール</title>
     <style>
         body { font-family: sans-serif; padding: 20px; background: #fdf2f8; color: #333; text-align: center; }
-        .container { max-width: 500px; margin: 50px auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        h1 { color: #db2777; margin-bottom: 20px; }
-        p { font-size: 0.9rem; color: #666; margin-bottom: 25px; }
+        .container { max-width: 550px; margin: 50px auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        h1 { color: #db2777; margin-bottom: 10px; }
+        p.desc { font-size: 0.9rem; color: #666; margin-bottom: 25px; }
         
+        /* 形式選択ボタン */
+        .format-selector { display: flex; justify-content: center; gap: 15px; margin-bottom: 20px; }
+        .radio-label { 
+            cursor: pointer; border: 2px solid #ddd; padding: 10px 20px; border-radius: 8px; 
+            font-weight: bold; color: #555; transition: 0.2s; display: flex; align-items: center; gap: 8px;
+        }
+        .radio-label:hover { background: #fff5f9; border-color: #db2777; }
+        /* 選択状態のデザイン */
+        input[type="radio"]:checked + span { color: #db2777; }
+        .radio-label:has(input:checked) { border-color: #db2777; background: #fff0f6; }
+
         #dropZone { border: 2px dashed #db2777; padding: 40px; border-radius: 10px; cursor: pointer; background: #fff5f9; transition: 0.2s; }
         #dropZone:hover { background: #fce7f3; }
         
-        button { margin-top: 20px; padding: 12px 30px; font-size: 1rem; background: #db2777; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; }
-        button:hover { background: #be185d; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
+        button#convertBtn { margin-top: 20px; padding: 15px 30px; font-size: 1.1rem; background: #db2777; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; box-shadow: 0 3px 6px rgba(0,0,0,0.15); transition: 0.2s; }
+        button#convertBtn:hover { background: #be185d; transform: translateY(-1px); }
+        button#convertBtn:disabled { background: #ccc; cursor: not-allowed; transform: none; box-shadow: none; }
         
-        #status { margin-top: 15px; font-weight: bold; min-height: 1.2em; }
-        a.back-link { display: block; margin-top: 20px; color: #db2777; text-decoration: none; }
+        #status { margin-top: 20px; font-weight: bold; min-height: 1.2em; }
+        a.back-link { display: block; margin-top: 25px; color: #db2777; text-decoration: none; }
+        
+        .note { font-size: 0.8em; color: #888; margin-top: 5px; }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <h1>📑 PDF to Word 変換</h1>
-        <p>PDFをアップロードすると、レイアウトを維持したまま<br>Wordファイル(.docx)に変換してダウンロードします。</p>
+        <h1>📑 PDF 変換ツール</h1>
+        <p class="desc">PDFをWordやExcelファイルに変換してダウンロードします。</p>
+
+        <div class="format-selector">
+            <label class="radio-label">
+                <input type="radio" name="format" value="docx" checked>
+                <span>🟦 Word (.docx)</span>
+            </label>
+            <label class="radio-label">
+                <input type="radio" name="format" value="xlsx">
+                <span>🟩 Excel (.xlsx)</span>
+            </label>
+        </div>
 
         <div id="dropZone" onclick="document.getElementById('pdfInput').click()">
             📄 クリックしてPDFを選択
             <input type="file" id="pdfInput" accept=".pdf" style="display:none;">
             <div id="fileInfo" style="margin-top:10px; font-weight:bold; color:#be185d;">未選択</div>
         </div>
+        <p class="note">※ Excel変換は「表データ」の抽出に特化しています。<br>レイアウトは完全には再現されません。</p>
 
         <button id="convertBtn">変換してダウンロード</button>
         <div id="status"></div>
@@ -54,12 +79,16 @@
         convertBtn.onclick = async () => {
             if(fileInput.files.length === 0) return alert('PDFファイルを選択してください');
 
+            // 選択された形式を取得
+            const format = document.querySelector('input[name="format"]:checked').value;
+
             convertBtn.disabled = true;
-            status.textContent = "変換中... 少し時間がかかります ⏳";
+            status.textContent = `変換中 (${format.toUpperCase()})... 少し時間がかかります ⏳`;
             status.style.color = "#d97706";
 
             const fd = new FormData();
             fd.append('pdfFile', fileInput.files[0]);
+            fd.append('format', format); // ★形式をサーバーに送信
 
             try {
                 const res = await fetch('/api/pdf/convert', { method: 'POST', body: fd });
@@ -69,12 +98,14 @@
                     throw new Error(err.message || '変換エラー');
                 }
 
-                // ファイルダウンロード処理 (Blobとして受け取る)
+                // ファイルダウンロード処理
                 const blob = await res.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = fileInput.files[0].name.replace('.pdf', '.docx');
+                // 拡張子を正しく設定
+                const ext = format === 'docx' ? '.docx' : '.xlsx';
+                a.download = fileInput.files[0].name.replace(/\.pdf$/i, '') + ext;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();

@@ -6,7 +6,7 @@ const multer = require('multer');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectsCommand, CopyObjectCommand, DeleteObjectCommand: S3DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
 
-// ★追加: Python実行用
+// ★Python実行・ファイル操作用
 const { exec } = require('child_process');
 const fs = require('fs'); 
 
@@ -161,37 +161,40 @@ app.get('/personal', (req, res) => res.sendFile(path.join(__dirname, 'personal.h
 app.get('/product-manager', (req, res) => res.sendFile(path.join(__dirname, 'product_manager.html')));
 app.get('/pdf-tool', (req, res) => res.sendFile(path.join(__dirname, 'pdf_tool.html')));
 
-// --- ★修正: PDF変換API (Pythonコマンド自動判別機能付き) ---
+// --- ★PDF変換API (Word/Excel対応版) ---
 app.post('/api/pdf/convert', isAuthenticated, tempUpload.single('pdfFile'), (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'ファイルがありません' });
 
-    const inputPath = req.file.path;
-    const outputFilename = req.file.originalname.replace('.pdf', '.docx');
-    const outputPath = inputPath + '.docx';
+    // 形式指定 (デフォルトは docx)
+    const targetFormat = req.body.format || 'docx';
+    if (!['docx', 'xlsx'].includes(targetFormat)) {
+        return res.status(400).json({ message: '無効な形式です' });
+    }
 
-    // 実行用ヘルパー関数: python3 を試してダメなら python を試す
+    const inputPath = req.file.path;
+    const outputExtension = '.' + targetFormat;
+    const outputFilename = req.file.originalname.replace(/\.pdf$/i, '') + outputExtension;
+    const outputPath = inputPath + outputExtension;
+
+    // Pythonコマンド実行関数
     const executePython = (cmd3, cmd2, callback) => {
         exec(cmd3, (err3, stdout3, stderr3) => {
-            if (!err3) return callback(null, stdout3); // python3 で成功
-            
-            // 失敗したら python を試す
+            if (!err3) return callback(null, stdout3);
             exec(cmd2, (err2, stdout2, stderr2) => {
-                if (!err2) return callback(null, stdout2); // python で成功
-                
-                // 両方失敗
+                if (!err2) return callback(null, stdout2);
                 callback(err3 || err2, null);
             });
         });
     };
 
-    const cmdArgs = `converter.py "${inputPath}" "${outputPath}"`;
+    // converter.py に 引数(入力, 出力, 形式) を渡す
+    const cmdArgs = `converter.py "${inputPath}" "${outputPath}" "${targetFormat}"`;
     
     executePython(`python3 ${cmdArgs}`, `python ${cmdArgs}`, (error, stdout) => {
         if (error) {
             console.error('Conversion Error:', error);
             fs.unlink(inputPath, ()=>{}); 
-            // ユーザーにわかりやすいエラーを返す
-            return res.status(500).json({ message: '変換失敗: サーバーにPython環境またはライブラリ(pdf2docx)がありません。' });
+            return res.status(500).json({ message: '変換失敗: Python環境やライブラリ(pdf2docx, pandas等)を確認してください。' });
         }
 
         res.download(outputPath, outputFilename, (err) => {
