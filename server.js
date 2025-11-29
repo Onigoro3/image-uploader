@@ -38,12 +38,10 @@ const s3Client = new S3Client({
     credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY } 
 });
 
-// ★修正: 画像、PDFに加えて動画(video)を許可
 const upload = multer({ 
     storage: multer.memoryStorage(), 
     limits: { fileSize: 500 * 1024 * 1024 }, // 動画用に上限を500MBに緩和
     fileFilter: (req, f, cb) => { 
-        // mimetypeが video/ で始まるものも許可
         if(f.mimetype.startsWith('image/') || f.mimetype.startsWith('video/') || f.mimetype==='application/pdf'|| f.mimetype.includes('csv') || f.originalname.toLowerCase().endsWith('.csv')) {
             cb(null, true);
         } else {
@@ -94,7 +92,7 @@ const apiHandler = (fn) => async (req, res, next) => {
     catch (e) { next(e); } 
 };
 
-// --- テーブル作成 ---
+// --- テーブル作成 & 高速化設定 ---
 const createTable = async () => {
     try {
         const client = await pool.connect();
@@ -135,6 +133,17 @@ const createTable = async () => {
             await addCol('csv_uploads', 'category_1', 'VARCHAR(100) DEFAULT \'未分類\'');
             await addCol('csv_uploads', 'category_2', 'VARCHAR(100) DEFAULT \'-\'');
             await addCol('csv_uploads', 'category_3', 'VARCHAR(100) DEFAULT \'-\'');
+
+            // ★追加: 検索高速化のためのインデックス作成 (pg_trgm)
+            try {
+                await client.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
+                await client.query('CREATE INDEX IF NOT EXISTS idx_images_title_trgm ON images USING gin (title gin_trgm_ops);');
+                await client.query('CREATE INDEX IF NOT EXISTS idx_product_info_name_trgm ON product_info USING gin (product_name gin_trgm_ops);');
+                await client.query('CREATE INDEX IF NOT EXISTS idx_product_info_model_trgm ON product_info USING gin (model_num1 gin_trgm_ops);');
+                console.log('Search indexes optimized.');
+            } catch (e) {
+                console.warn('Index creation skipped (pg_trgm extension might not be supported):', e.message);
+            }
 
             console.log('Database schema synced.');
         } finally { client.release(); }

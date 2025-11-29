@@ -92,7 +92,11 @@
         .edit-btn { background: none; border: none; cursor: pointer; color: #cbd5e1; font-size: 1.1em; padding: 0 5px; line-height: 1; }
         .edit-btn:hover { color: #f59e0b; }
         
+        /* 検索エリアのスタイル修正 */
         #search-section { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+        #searchBtn { background: #15803d; color: white; padding: 10px 20px; width: auto; margin-bottom: 0; }
+        #searchBtn:hover { opacity: 0.9; }
+
         #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; }
         
         .image-item { 
@@ -107,8 +111,6 @@
         /* 商品情報 */
         .product-info { padding: 10px; font-size: 0.85rem; border-top: 1px solid #f0f0f0; background: #fff; flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; }
         .p-name { font-weight: bold; color: #1e293b; line-height: 1.4; margin-bottom: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-        
-        /* 画像ファイル名表示用 */
         .p-filename { font-size: 0.75em; color: #64748b; margin-bottom: 5px; word-break: break-all; }
 
         .p-model-container { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
@@ -184,8 +186,12 @@
 
             <div id="search-section">
                 <input type="search" id="searchInput" placeholder="商品名、型番、ファイル名で検索..." style="flex-grow:1; margin-bottom:0;">
-                <select id="sortBy" style="width:auto; margin-bottom:0;"><option value="created_at">登録日順</option><option value="title">名前順</option></select>
-                <select id="sortOrder" style="width:auto; margin-bottom:0;"><option value="DESC">新しい順</option><option value="ASC">古い順</option></select>
+                <button id="searchBtn">🔍 検索</button> 
+                
+                <div style="display:flex; gap:5px;">
+                    <select id="sortBy" style="width:auto; margin-bottom:0;"><option value="created_at">登録日順</option><option value="title">名前順</option></select>
+                    <select id="sortOrder" style="width:auto; margin-bottom:0;"><option value="DESC">新しい順</option><option value="ASC">古い順</option></select>
+                </div>
             </div>
 
             <div id="gallery-section">
@@ -228,7 +234,9 @@
             upBtn: document.getElementById('uploadButton'), stat: document.getElementById('uploadStatus'),
             drop: document.getElementById('dropZone'), info: document.getElementById('fileInfo'),
             gal: document.getElementById('image-gallery-container'), csv: document.getElementById('csvDownloader'),
-            search: document.getElementById('searchInput'), sort: document.getElementById('sortBy'), order: document.getElementById('sortOrder'),
+            // 検索ボタン要素追加
+            search: document.getElementById('searchInput'), searchBtn: document.getElementById('searchBtn'), 
+            sort: document.getElementById('sortBy'), order: document.getElementById('sortOrder'),
         };
         let sels = { c1: null, c2: null, c3: null, f: null };
         let lightbox;
@@ -236,7 +244,16 @@
         function initApp() {
             loadCat1(); setupDropZone(); setupSelects();
             els.upBtn.onclick = uploadFiles;
-            els.search.oninput = debounce(() => loadImages(sels.f, els.search.value), 500);
+            
+            // 変更: 自動検索を廃止し、ボタンまたはEnterキーで検索実行
+            els.searchBtn.onclick = () => loadImages(sels.f, els.search.value);
+            els.search.onkeydown = (e) => {
+                if(e.key === 'Enter') {
+                    e.preventDefault();
+                    loadImages(sels.f, els.search.value);
+                }
+            };
+
             els.sort.onchange = els.order.onchange = () => loadImages(sels.f, els.search.value);
             els.createBtn.onclick = createCategoryOnly;
         }
@@ -355,7 +372,6 @@
         function setupSelects(){const h=(s,i,l)=>{checkNew(s,i);if(s.value!=='_new_'){if(l===1)loadCat2(s.value);if(l===2)loadCat3(sels.c1,s.value);}};els.c1.onchange=()=>h(els.c1,els.c1n,1);els.c2.onchange=()=>h(els.c2,els.c2n,2);els.c3.onchange=()=>checkNew(els.c3,els.c3n);}
         function checkNew(s,i){i.style.display=s.value==='_new_'?'block':'none';}
         async function uploadFiles(){const fd=new FormData();fd.append('category1',els.c1.value==='_new_'?els.c1n.value:els.c1.value);fd.append('category2',els.c2.value==='_new_'?els.c2n.value:els.c2.value);fd.append('category3',els.c3.value==='_new_'?els.c3n.value:els.c3.value);fd.append('folderName',els.folder.value);for(let f of els.file.files)fd.append('imageFiles',f);els.stat.innerText='UP...';try{const r=await fetch('/upload',{method:'POST',body:fd});if(!r.ok)throw 1;els.stat.innerText='OK';els.file.value='';loadCat1();}catch(e){els.stat.innerText='Err';}}
-        function debounce(f,w){let t;return function(...a){clearTimeout(t);t=setTimeout(()=>f.apply(this,a),w);};}
     </script>
 </body>
 </html>
