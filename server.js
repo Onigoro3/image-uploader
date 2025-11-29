@@ -44,7 +44,7 @@ const s3Client = new S3Client({
 
 const upload = multer({ 
     storage: multer.memoryStorage(), 
-    limits: { fileSize: 500 * 1024 * 1024 },
+    limits: { fileSize: 500 * 1024 * 1024 }, // 500MB制限
     fileFilter: (req, f, cb) => { 
         if(f.mimetype.startsWith('image/') || f.mimetype.startsWith('video/') || f.mimetype==='application/pdf'|| f.mimetype.includes('csv') || f.originalname.toLowerCase().endsWith('.csv')) {
             cb(null, true);
@@ -54,9 +54,11 @@ const upload = multer({
     } 
 });
 
-// ★追加: 一時ファイル保存用の設定 (PDF変換用)
-const tempUpload = multer({ dest: 'temp_uploads/' }); 
-// ※ フォルダ 'temp_uploads' がない場合は自動生成されますが、権限エラーが出る場合は手動作成してください
+// PDF変換用の一時フォルダ設定
+const tempUpload = multer({ dest: 'temp_uploads/' });
+if (!fs.existsSync('temp_uploads')){
+    fs.mkdirSync('temp_uploads');
+}
 
 // --- Middleware ---
 app.use(express.json());
@@ -120,7 +122,6 @@ const createTable = async () => {
             await addCol('images', 'category_3', 'VARCHAR(100) DEFAULT \'default_cat3\'');
             await addCol('images', 'folder_name', 'VARCHAR(100) DEFAULT \'default_folder\'');
             
-            // ... (既存の商品カラム定義) ...
             await addCol('product_info', 'product_name', 'VARCHAR(1024)');
             await addCol('product_info', 'model_num1', 'VARCHAR(255)');
             await addCol('product_info', 'model_num2', 'VARCHAR(255)');
@@ -133,7 +134,9 @@ const createTable = async () => {
             await addCol('product_info', 'mercari_price', 'INTEGER DEFAULT 0');
             await addCol('product_info', 'image_filename', 'VARCHAR(1024)');
             await addCol('product_info', 'csv_upload_id', 'INTEGER');
+            
             await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_info' AND column_name='code') THEN ALTER TABLE product_info RENAME COLUMN code TO product_code; END IF; END $$;`);
+
             await addCol('csv_uploads', 'category_1', 'VARCHAR(100) DEFAULT \'未分類\'');
             await addCol('csv_uploads', 'category_2', 'VARCHAR(100) DEFAULT \'-\'');
             await addCol('csv_uploads', 'category_3', 'VARCHAR(100) DEFAULT \'-\'');
@@ -156,10 +159,9 @@ app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'register.h
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/personal', (req, res) => res.sendFile(path.join(__dirname, 'personal.html')));
 app.get('/product-manager', (req, res) => res.sendFile(path.join(__dirname, 'product_manager.html')));
-// ★追加: PDFツールのページ
 app.get('/pdf-tool', (req, res) => res.sendFile(path.join(__dirname, 'pdf_tool.html')));
 
-// --- ★追加: PDF変換API ---
+// --- ★修正: PDF変換API (Pythonコマンド自動判別機能付き) ---
 app.post('/api/pdf/convert', isAuthenticated, tempUpload.single('pdfFile'), (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'ファイルがありません' });
 
@@ -167,29 +169,39 @@ app.post('/api/pdf/convert', isAuthenticated, tempUpload.single('pdfFile'), (req
     const outputFilename = req.file.originalname.replace('.pdf', '.docx');
     const outputPath = inputPath + '.docx';
 
-    // Pythonスクリプトを実行
-    // "python" コマンドがサーバーで使える前提です。環境によっては "python3" にしてください。
-    const command = `python converter.py "${inputPath}" "${outputPath}"`;
+    // 実行用ヘルパー関数: python3 を試してダメなら python を試す
+    const executePython = (cmd3, cmd2, callback) => {
+        exec(cmd3, (err3, stdout3, stderr3) => {
+            if (!err3) return callback(null, stdout3); // python3 で成功
+            
+            // 失敗したら python を試す
+            exec(cmd2, (err2, stdout2, stderr2) => {
+                if (!err2) return callback(null, stdout2); // python で成功
+                
+                // 両方失敗
+                callback(err3 || err2, null);
+            });
+        });
+    };
 
-    exec(command, (error, stdout, stderr) => {
+    const cmdArgs = `converter.py "${inputPath}" "${outputPath}"`;
+    
+    executePython(`python3 ${cmdArgs}`, `python ${cmdArgs}`, (error, stdout) => {
         if (error) {
-            console.error(`exec error: ${error}`);
-            // 失敗しても一時ファイル削除
+            console.error('Conversion Error:', error);
             fs.unlink(inputPath, ()=>{}); 
-            return res.status(500).json({ message: '変換に失敗しました。Python環境を確認してください。' });
+            // ユーザーにわかりやすいエラーを返す
+            return res.status(500).json({ message: '変換失敗: サーバーにPython環境またはライブラリ(pdf2docx)がありません。' });
         }
 
-        // 成功したらファイルをダウンロードさせる
         res.download(outputPath, outputFilename, (err) => {
-            // ダウンロード完了後に一時ファイルを削除
             fs.unlink(inputPath, ()=>{});
             fs.unlink(outputPath, ()=>{});
         });
     });
 });
 
-// ... (以下、既存のAPI群はそのまま) ...
-// 認証API
+// ... (以下、既存API群) ...
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password || password.length < 8) return res.status(400).json({ message: 'ユーザー名と8文字以上のパスワード必須' });
@@ -202,7 +214,7 @@ app.get('/api/auth/check', (req, res) => { if (req.isAuthenticated()) res.json({
 
 app.post('/api/admin/init-db', isAuthenticated, apiHandler(async (req, res) => { await createTable(); res.json({ message: 'データベース構成を更新しました。' }); }));
 
-// --- カテゴリ取得 ---
+// カテゴリ取得
 const getCategoryList = (col, level) => apiHandler(async (req, res) => {
     let query = "", params = [];
     let countQuery = "", countParams = [];
@@ -220,13 +232,11 @@ const getCategoryList = (col, level) => apiHandler(async (req, res) => {
         countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images WHERE category_1=$1 AND category_2=$2 GROUP BY ${col}`;
         countParams = [req.params.c1, req.params.c2];
     }
-    
     const { rows: nameRows } = await pool.query(query, params);
     const distinctNames = [...new Set(nameRows.map(r => r[col]))].filter(v => v);
     const { rows: countRows } = await pool.query(countQuery, countParams);
     const countMap = {};
     countRows.forEach(r => countMap[r.name] = parseInt(r.cnt));
-
     const result = distinctNames.map(name => ({ name: name, count: countMap[name] || 0 }));
     res.json(result);
 });
@@ -267,22 +277,13 @@ app.get('/api/products/template', isAuthenticated, (req, res) => {
 });
 
 app.post('/api/products/import', isAuthenticated, (req, res, next) => {
-    upload.single('csvFile')(req, res, (err) => {
-        if (err) return next(err);
-        next();
-    });
+    upload.single('csvFile')(req, res, (err) => { if (err) return next(err); next(); });
 }, apiHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'CSVファイルがありません' });
     const { category1, category2, category3 } = req.body;
     const c1 = category1 || '未分類'; const c2 = category2 || '-'; const c3 = category3 || '-';
-
     const csvData = req.file.buffer.toString('utf-8').replace(/^\uFEFF/, '');
-    const records = parse(csvData, { 
-        columns: ['product_name','model_num1','model_num2','model_num3','model_num4','condition','series','stock','ec_price','mercari_price','product_code','image_filename'], 
-        from_line: 2, 
-        skip_empty_lines: true, 
-        trim: true 
-    });
+    const records = parse(csvData, { columns: ['product_name','model_num1','model_num2','model_num3','model_num4','condition','series','stock','ec_price','mercari_price','product_code','image_filename'], from_line: 2, skip_empty_lines: true, trim: true });
     
     const client = await pool.connect();
     try {
@@ -293,10 +294,7 @@ app.post('/api/products/import', isAuthenticated, (req, res, next) => {
             if (!row.product_code) continue;
             const query = `INSERT INTO product_info (product_name, model_num1, model_num2, model_num3, model_num4, condition, series, stock, ec_price, mercari_price, product_code, image_filename, csv_upload_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP) ON CONFLICT (product_code) DO UPDATE SET product_name=EXCLUDED.product_name, model_num1=EXCLUDED.model_num1, model_num2=EXCLUDED.model_num2, model_num3=EXCLUDED.model_num3, model_num4=EXCLUDED.model_num4, condition=EXCLUDED.condition, series=EXCLUDED.series, stock=EXCLUDED.stock, ec_price=EXCLUDED.ec_price, mercari_price=EXCLUDED.mercari_price, image_filename=EXCLUDED.image_filename, csv_upload_id=EXCLUDED.csv_upload_id, updated_at=CURRENT_TIMESTAMP`;
             const stock = parseInt(row.stock || '0'); const ec = parseInt(row.ec_price || '0'); const mer = parseInt(row.mercari_price || '0');
-            await client.query(query, [
-                row.product_name, row.model_num1, row.model_num2 || null, row.model_num3 || null, row.model_num4 || null, 
-                row.condition, row.series, stock, ec, mer, row.product_code, row.image_filename, uploadId
-            ]);
+            await client.query(query, [row.product_name, row.model_num1, row.model_num2 || null, row.model_num3 || null, row.model_num4 || null, row.condition, row.series, stock, ec, mer, row.product_code, row.image_filename, uploadId]);
         }
         await client.query('COMMIT'); res.json({ message: `${req.file.originalname} を登録しました (${records.length}件)` });
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
