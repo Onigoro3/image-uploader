@@ -21,6 +21,9 @@ const https = require('https');
 const archiver = require('archiver');
 const { parse } = require('csv-parse/sync');
 
+// ▼▼▼ 追加：CSV出力用ライブラリ ▼▼▼
+const { Parser } = require('json2csv');
+
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -410,6 +413,46 @@ app.delete('/api/cat3/:c1/:c2/:name', isAuthenticated, apiHandler(async(req, res
 
 app.delete('/api/personal/album/:name', isAuthenticated, apiHandler(async (req, res) => { await performDelete(res, "category_1='Private' AND folder_name=$1", [req.params.name]); }));
 app.get('/api/personal/download/:folder', isAuthenticated, apiHandler(async (req, res) => { const folder = req.params.folder; const { rows } = await pool.query(`SELECT title FROM images WHERE category_1='Private' AND folder_name=$1`, [folder]); if (rows.length === 0) return res.status(404).send('Empty'); res.attachment(`${encodeURIComponent(folder)}.zip`); const archive = archiver('zip', { zlib: { level: 9 } }); archive.pipe(res); for (const row of rows) { try { const s3Item = await s3Client.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: row.title })); archive.append(s3Item.Body, { name: row.title.split('/').pop() }); } catch (e) {} } await archive.finalize(); }));
+
+// ▼▼▼ 追加：選択された画像のCSV一括ダウンロードAPI ▼▼▼
+app.post('/api/products/export-csv', isAuthenticated, apiHandler(async (req, res) => {
+    const { targetIds } = req.body;
+    let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename))`;
+    let params = [];
+
+    // IDリストがある場合はフィルタリング
+    if (targetIds && Array.isArray(targetIds) && targetIds.length > 0) {
+        sql += ` WHERE i.id = ANY($1::int[])`;
+        params.push(targetIds);
+    } else {
+        // 空の場合はエラーまたは全件（ここではエラーハンドリング推奨）
+        return res.status(400).send('対象が選択されていません');
+    }
+
+    sql += ` ORDER BY i.created_at DESC`;
+    const { rows } = await pool.query(sql, params);
+
+    if (rows.length === 0) return res.status(404).send('データが見つかりません');
+
+    // CSVデータ作成
+    const csvData = rows.map(item => ({
+        '画像URL': item.url || '',
+        'ファイル名': item.title ? item.title.split('/').pop() : '',
+        '商品名': item.product_name || '',
+        '型番': [item.model_num1, item.model_num2].filter(Boolean).join(' '),
+        '在庫': item.stock || 0,
+        'EC価格': item.ec_price || 0,
+        'メルカリ価格': item.mercari_price || 0,
+        '登録日': item.created_at ? new Date(item.created_at).toLocaleDateString('ja-JP') : ''
+    }));
+
+    const json2csvParser = new Parser({ withBOM: true });
+    const csv = json2csvParser.parse(csvData);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="selected_products.csv"');
+    res.status(200).send(csv);
+}));
 
 app.use((err, req, res, next) => {
     console.error("Global Error Handler:", err);

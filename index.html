@@ -364,7 +364,7 @@
 
                 d.forEach(img => {
                     // 全件DL用にIDを保存
-                    if(img._id) currentDisplayedIds.push(img._id);
+                    if(img.id) currentDisplayedIds.push(img.id);
 
                     const div = document.createElement('div'); div.className = 'image-item';
                     
@@ -372,7 +372,7 @@
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
                     checkbox.className = 'img-select-checkbox';
-                    checkbox.value = img._id; 
+                    checkbox.value = img.id; 
                     checkbox.onclick = (e) => e.stopPropagation(); 
                     div.appendChild(checkbox);
 
