@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>画像アップローダー</title>
+    <title>画像アップローダー & CSV管理</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.css" />
     <style>
         /* --- 基本設定 --- */
@@ -25,7 +25,6 @@
         #personal-btn { background: #0ea5e9; }
         #logoutButton { background: #dc2626; }
         #fix-db-btn { background: #ca8a04; color: #fff !important; }
-        /* PDFボタン用スタイル */
         #pdf-btn { background: #db2777; } 
 
         #main-content { margin-top: 70px; max-width: 1200px; margin-left: auto; margin-right: auto; }
@@ -94,11 +93,12 @@
         .edit-btn { background: none; border: none; cursor: pointer; color: #cbd5e1; font-size: 1.1em; padding: 0 5px; line-height: 1; }
         .edit-btn:hover { color: #f59e0b; }
         
-        /* 検索エリア */
+        /* 検索・CSVエリア */
         #search-section { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
         #searchBtn { background: #15803d; color: white; padding: 10px 20px; width: auto; margin-bottom: 0; }
         #searchBtn:hover { opacity: 0.9; }
 
+        /* 画像一覧 */
         #image-gallery-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; }
         
         .image-item { 
@@ -127,13 +127,31 @@
         .stock-ng { color: #dc2626; background: #fee2e2; padding: 1px 5px; border-radius: 3px; }
         .price-val { font-weight: bold; font-size: 1rem; color: #0f172a; }
 
-        #csvDownloader { color: #15803d; font-size: 0.85em; text-decoration: underline; margin-left: 10px; cursor: pointer; }
         .sl-wrapper .sl-caption { display: block !important; opacity: 1 !important; background: rgba(0,0,0,0.85) !important; color: #fff !important; padding: 15px !important; bottom: 0 !important; position: fixed !important; width: 100% !important; text-align: center !important; z-index: 999999 !important; pointer-events: none; }
+
+        /* ▼▼▼ 追加：CSV機能用スタイル ▼▼▼ */
+        .img-select-checkbox {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            width: 20px;
+            height: 20px;
+            z-index: 10;
+            cursor: pointer;
+            accent-color: #15803d; 
+            transform: scale(1.2);
+            box-shadow: 0 0 5px rgba(255,255,255,0.8);
+        }
+        .csv-btn-group { display: flex; gap: 5px; margin-left: auto; }
+        .btn-csv-select { background-color: #0ea5e9; color: white; padding: 10px 15px; } 
+        .btn-csv-all { background-color: #ca8a04; color: white; padding: 10px 15px; }    
 
         @media (max-width: 768px) {
             #upload-section { grid-template-columns: 1fr; }
             #gallery-section { grid-template-columns: 1fr 1fr; }
             #image-gallery-container { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+            .csv-btn-group { margin-left: 0; width: 100%; margin-top: 10px; }
+            .csv-btn-group button { flex: 1; }
         }
     </style>
 </head>
@@ -169,7 +187,7 @@
         </div>
 
         <div class="panel">
-            <h3>🖼️ ギャラリー・検索・カテゴリ管理 <a href="#" id="csvDownloader" style="display:none;">[現在の一覧をCSV保存]</a></h3>
+            <h3>🖼️ ギャラリー・検索・CSV出力</h3>
             
             <div class="cat-creation-area">
                 <div class="input-group">
@@ -195,6 +213,11 @@
                     <select id="sortBy" style="width:auto; margin-bottom:0;"><option value="created_at">登録日順</option><option value="title">名前順</option></select>
                     <select id="sortOrder" style="width:auto; margin-bottom:0;"><option value="DESC">新しい順</option><option value="ASC">古い順</option></select>
                 </div>
+
+                <div class="csv-btn-group">
+                    <button id="dlSelectedBtn" class="btn-csv-select" title="チェックした商品のみ">✔ 選択CSV</button>
+                    <button id="dlAllBtn" class="btn-csv-all" title="現在表示されている全件">📥 全件CSV</button>
+                </div>
             </div>
 
             <div id="gallery-section">
@@ -211,6 +234,9 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js"></script>
     <script>
+        // 現在表示されている画像のIDリストを保持する変数
+        let currentDisplayedIds = [];
+
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const res = await fetch('/api/auth/check');
@@ -236,10 +262,12 @@
             folder: document.getElementById('folderInput'),
             upBtn: document.getElementById('uploadButton'), stat: document.getElementById('uploadStatus'),
             drop: document.getElementById('dropZone'), info: document.getElementById('fileInfo'),
-            gal: document.getElementById('image-gallery-container'), csv: document.getElementById('csvDownloader'),
-            // 検索ボタン要素追加
+            gal: document.getElementById('image-gallery-container'),
+            // 検索・CSVボタン
             search: document.getElementById('searchInput'), searchBtn: document.getElementById('searchBtn'), 
             sort: document.getElementById('sortBy'), order: document.getElementById('sortOrder'),
+            dlSel: document.getElementById('dlSelectedBtn'),
+            dlAll: document.getElementById('dlAllBtn'),
         };
         let sels = { c1: null, c2: null, c3: null, f: null };
         let lightbox;
@@ -248,18 +276,20 @@
             loadCat1(); setupDropZone(); setupSelects();
             els.upBtn.onclick = uploadFiles;
             
-            // 検索ボタンクリックで実行
+            // 検索系イベント
             els.searchBtn.onclick = () => loadImages(sels.f, els.search.value);
-            // Enterキーでも実行
             els.search.onkeydown = (e) => {
                 if(e.key === 'Enter') {
                     e.preventDefault();
                     loadImages(sels.f, els.search.value);
                 }
             };
-
             els.sort.onchange = els.order.onchange = () => loadImages(sels.f, els.search.value);
             els.createBtn.onclick = createCategoryOnly;
+
+            // CSVダウンロードイベント
+            els.dlSel.onclick = downloadSelectedItems;
+            els.dlAll.onclick = downloadAllDisplayedItems;
         }
 
         async function createCategoryOnly() {
@@ -320,6 +350,7 @@
             } catch(e) { container.innerHTML += '<p style="color:red;">Error</p>'; }
         }
 
+        // ▼▼ 画像読み込み関数の修正版（チェックボックス追加） ▼▼
         async function loadImages(f, q='') {
             if(!f && !q) return;
             els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center; color:#666;">読み込み中...<\/p>';
@@ -327,8 +358,24 @@
             try {
                 const r = await fetch(`/api/search?${p}`); const d = await r.json();
                 els.gal.innerHTML = d.length ? '' : '<p style="grid-column:span 4; text-align:center; color:#888;">該当なし<\/p>';
+                
+                // リセット
+                currentDisplayedIds = [];
+
                 d.forEach(img => {
+                    // 全件DL用にIDを保存
+                    if(img._id) currentDisplayedIds.push(img._id);
+
                     const div = document.createElement('div'); div.className = 'image-item';
+                    
+                    // チェックボックス作成
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'img-select-checkbox';
+                    checkbox.value = img._id; 
+                    checkbox.onclick = (e) => e.stopPropagation(); 
+                    div.appendChild(checkbox);
+
                     const name = img.title.split('/').pop();
                     let infoHtml = '', captionHtml = '';
                     
@@ -360,12 +407,14 @@
                     }
                     const safeCaption = captionHtml.replace(/"/g, '&quot;');
                     let mediaHtml = img.url.toLowerCase().endsWith('.pdf') ? `<div class="img-wrapper"><a href="${img.url}" target="_blank" class="pdf-icon">📄 PDF<br><span style="font-size:0.7em;">${name}</span></a></div>` : `<div class="img-wrapper"><a href="${img.url}" class="lightbox-link" data-caption="${safeCaption}"><img src="${img.url}" class="gallery-image" alt="${name}"></a></div>`;
-                    div.innerHTML = mediaHtml + infoHtml; els.gal.appendChild(div);
+                    
+                    // HTML結合
+                    div.insertAdjacentHTML('beforeend', mediaHtml + infoHtml); 
+                    els.gal.appendChild(div);
                 });
                 if(lightbox) lightbox.destroy();
                 lightbox = new SimpleLightbox('#image-gallery-container .lightbox-link', { captionsData: 'data-caption', captionDelay: 0, captionPosition: 'bottom' });
-                els.csv.style.display = f ? 'inline' : 'none';
-                if(f) els.csv.href = `/download-csv?folder=${f}&cat1=${sels.c1}&cat2=${sels.c2}&cat3=${sels.c3}`;
+                
             } catch(e) { els.gal.innerHTML = '<p style="color:red;">エラー<\/p>'; }
         }
 
@@ -376,6 +425,66 @@
         function setupSelects(){const h=(s,i,l)=>{checkNew(s,i);if(s.value!=='_new_'){if(l===1)loadCat2(s.value);if(l===2)loadCat3(sels.c1,s.value);}};els.c1.onchange=()=>h(els.c1,els.c1n,1);els.c2.onchange=()=>h(els.c2,els.c2n,2);els.c3.onchange=()=>checkNew(els.c3,els.c3n);}
         function checkNew(s,i){i.style.display=s.value==='_new_'?'block':'none';}
         async function uploadFiles(){const fd=new FormData();fd.append('category1',els.c1.value==='_new_'?els.c1n.value:els.c1.value);fd.append('category2',els.c2.value==='_new_'?els.c2n.value:els.c2.value);fd.append('category3',els.c3.value==='_new_'?els.c3n.value:els.c3.value);fd.append('folderName',els.folder.value);for(let f of els.file.files)fd.append('imageFiles',f);els.stat.innerText='UP...';try{const r=await fetch('/upload',{method:'POST',body:fd});if(!r.ok)throw 1;els.stat.innerText='OK';els.file.value='';loadCat1();}catch(e){els.stat.innerText='Err';}}
+
+        // ▼▼ CSVダウンロード用ロジック ▼▼
+        const CSV_API_URL = "/api/products/export-csv"; 
+
+        async function executeCsvDownload(ids) {
+            if (!ids || ids.length === 0) {
+                alert("対象データがありません");
+                return;
+            }
+            try {
+                const originalText = els.stat.innerText;
+                els.stat.innerText = "CSV作成中..."; 
+
+                const response = await fetch(CSV_API_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ targetIds: ids }) 
+                });
+
+                if (!response.ok) throw new Error("Server Error");
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                const dateStr = new Date().toISOString().slice(0,19).replace(/[-T:]/g,"");
+                a.download = `products_${dateStr}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                els.stat.innerText = "";
+
+            } catch (e) {
+                console.error(e);
+                alert("CSVダウンロードに失敗しました。");
+                els.stat.innerText = "Error";
+            }
+        }
+
+        function downloadSelectedItems() {
+            const checkboxes = document.querySelectorAll('.img-select-checkbox:checked');
+            if (checkboxes.length === 0) {
+                alert("画像が選択されていません。\n画像の左上のチェックボックスを選択してください。");
+                return;
+            }
+            const ids = Array.from(checkboxes).map(cb => cb.value);
+            executeCsvDownload(ids);
+        }
+
+        function downloadAllDisplayedItems() {
+            if (currentDisplayedIds.length === 0) {
+                alert("表示されているデータがありません。");
+                return;
+            }
+            if(!confirm(`現在表示されている ${currentDisplayedIds.length} 件をすべてCSV出力しますか？`)){
+                return;
+            }
+            executeCsvDownload(currentDisplayedIds);
+        }
     </script>
 </body>
 </html>
