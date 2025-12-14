@@ -22,14 +22,9 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ★★★ 追加: Render等のプロキシ下でSecure Cookieを扱うために必須 ★★★
+// ★★★ Render設定 & CORS許可 ★★★
 app.set('trust proxy', 1);
-
-// CORS設定 (Electronからのアクセス許可)
-app.use(cors({
-    origin: true, 
-    credentials: true 
-}));
+app.use(cors({ origin: true, credentials: true }));
 
 // --- 1. データベース接続 ---
 const pool = new Pool({
@@ -67,18 +62,18 @@ if (!fs.existsSync('temp_uploads')) fs.mkdirSync('temp_uploads');
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// --- ▼ 認証設定 (ここを修正) ▼ ---
+// --- ▼ 認証設定 ▼ ---
 app.use(session({
     store: new PgStore({ pool: pool, tableName: 'user_sessions', createTableIfMissing: true }),
     secret: process.env.SESSION_SECRET || 'secret_key', 
     resave: false, 
     saveUninitialized: false, 
-    proxy: true, // プロキシ経由を許可
+    proxy: true,
     cookie: { 
         maxAge: 30 * 24 * 60 * 60 * 1000, 
-        secure: true,        // ★ Render(HTTPS)では必須
+        secure: true,        // Render(HTTPS)用
         httpOnly: true, 
-        sameSite: 'none'     // ★ Electron(別オリジン)からのCookie送受信に必須
+        sameSite: 'none'     // クロスオリジン用
     } 
 }));
 
@@ -107,22 +102,18 @@ function isAuthenticated(req, res, next) {
 }
 const apiHandler = (fn) => async (req, res, next) => { try { await fn(req, res, next); } catch (e) { next(e); } };
 
-// --- DBテーブル作成 ---
+// --- DB初期化 ---
 const createTable = async () => {
     try {
         const client = await pool.connect();
         try {
-            // (既存のテーブル作成クエリは省略せずそのまま記載します)
             await client.query(`CREATE TABLE IF NOT EXISTS images (id SERIAL PRIMARY KEY, title VARCHAR(1024) NOT NULL, url VARCHAR(1024) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(100) UNIQUE NOT NULL, password_hash VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS "user_sessions" ("sid" varchar NOT NULL COLLATE "default" PRIMARY KEY, "sess" json NOT NULL, "expire" timestamp(6) NOT NULL) WITH (OIDS=FALSE);`);
             await client.query(`CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");`);
             await client.query(`CREATE TABLE IF NOT EXISTS product_info (product_code VARCHAR(255) PRIMARY KEY, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
             await client.query(`CREATE TABLE IF NOT EXISTS csv_uploads (id SERIAL PRIMARY KEY, filename VARCHAR(255) NOT NULL, uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
-
-            const addCol = async (table, col, type) => {
-                await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='${table}' AND column_name='${col}') THEN ALTER TABLE ${table} ADD COLUMN ${col} ${type}; END IF; END $$;`);
-            };
+            const addCol = async (table, col, type) => { await client.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='${table}' AND column_name='${col}') THEN ALTER TABLE ${table} ADD COLUMN ${col} ${type}; END IF; END $$;`); };
             await addCol('images', 'category_1', 'VARCHAR(100) DEFAULT \'default_cat1\'');
             await addCol('images', 'category_2', 'VARCHAR(100) DEFAULT \'default_cat2\'');
             await addCol('images', 'category_3', 'VARCHAR(100) DEFAULT \'default_cat3\'');
@@ -143,17 +134,12 @@ const createTable = async () => {
             await addCol('csv_uploads', 'category_1', 'VARCHAR(100) DEFAULT \'未分類\'');
             await addCol('csv_uploads', 'category_2', 'VARCHAR(100) DEFAULT \'-\'');
             await addCol('csv_uploads', 'category_3', 'VARCHAR(100) DEFAULT \'-\'');
-            try {
-                await client.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
-                await client.query('CREATE INDEX IF NOT EXISTS idx_images_title_trgm ON images USING gin (title gin_trgm_ops);');
-                await client.query('CREATE INDEX IF NOT EXISTS idx_product_info_name_trgm ON product_info USING gin (product_name gin_trgm_ops);');
-                await client.query('CREATE INDEX IF NOT EXISTS idx_product_info_model_trgm ON product_info USING gin (model_num1 gin_trgm_ops);');
-            } catch (e) {}
+            try { await client.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;'); await client.query('CREATE INDEX IF NOT EXISTS idx_images_title_trgm ON images USING gin (title gin_trgm_ops);'); await client.query('CREATE INDEX IF NOT EXISTS idx_product_info_name_trgm ON product_info USING gin (product_name gin_trgm_ops);'); await client.query('CREATE INDEX IF NOT EXISTS idx_product_info_model_trgm ON product_info USING gin (model_num1 gin_trgm_ops);'); } catch (e) {}
         } finally { client.release(); }
     } catch (err) { console.error('DB Init Error:', err); }
 };
 
-// --- ルート設定 (一部省略なし) ---
+// --- ルート設定 ---
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'login.html')));
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'register.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
@@ -162,25 +148,22 @@ app.get('/product-manager', (req, res) => res.sendFile(path.join(__dirname, 'pro
 app.get('/pdf-tool', (req, res) => res.sendFile(path.join(__dirname, 'pdf_tool.html')));
 
 // API群
-app.post('/api/auth/register', async (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password || password.length < 8) return res.status(400).json({ message: 'ユーザー名と8文字以上のパスワード必須' });
-    try { const hash = await bcrypt.hash(password, 10); await pool.query('INSERT INTO users (username, password_hash) VALUES ($1, $2)', [username, hash]); res.status(201).json({ message: '登録成功' });
-    } catch (e) { if (e.code === '23505') res.status(409).json({ message: 'そのユーザー名は使用済みです' }); else res.status(500).json({ message: 'サーバーエラー' }); }
-});
+app.post('/api/auth/register', async (req, res) => { const { username, password } = req.body; if (!username || !password || password.length < 8) return res.status(400).json({ message: 'ユーザー名と8文字以上のパスワード必須' }); try { const hash = await bcrypt.hash(password, 10); await pool.query('INSERT INTO users (username, password_hash) VALUES ($1, $2)', [username, hash]); res.status(201).json({ message: '登録成功' }); } catch (e) { if (e.code === '23505') res.status(409).json({ message: 'そのユーザー名は使用済みです' }); else res.status(500).json({ message: 'サーバーエラー' }); } });
 app.post('/api/auth/login', (req, res, next) => { passport.authenticate('local', (err, user, info) => { if (err) return next(err); if (!user) return res.status(401).json({ message: info.message || 'ログイン失敗' }); req.logIn(user, (err) => { if (err) return next(err); return res.json({ message: 'ログイン成功', user: user.username }); }); })(req, res, next); });
 app.post('/api/auth/logout', (req, res, next) => { req.logout((err) => { if(err)return next(err); req.session.destroy(() => { res.clearCookie('connect.sid'); res.json({message:'ログアウト'}); }); }); });
 app.get('/api/auth/check', (req, res) => { if (req.isAuthenticated()) res.json({ loggedIn: true, username: req.user.username }); else res.json({ loggedIn: false }); });
 app.post('/api/admin/init-db', isAuthenticated, apiHandler(async (req, res) => { await createTable(); res.json({ message: 'データベース構成を更新しました。' }); }));
 
-// 検索API (修正版: 空の検索も許可)
+// ★★★ 修正版: 検索API (ページネーション対応) ★★★
 app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
-    const { cat1, cat2, cat3, folder, q, sort, order } = req.query;
-    
-    // ★修正: 以下の制限行を削除（またはコメントアウト）して、いきなり全件表示できるようにする
-    // if (!q && (!cat1 || !cat2 || !cat3 || !folder)) return res.status(400).json({...});
+    const { cat1, cat2, cat3, folder, q, sort, order, limit, offset } = req.query;
 
-    const s = sort === 'title' ? 'i.title' : 'i.created_at'; const d = order === 'ASC' ? 'ASC' : 'DESC';
+    const s = sort === 'title' ? 'i.title' : 'i.created_at'; 
+    const d = order === 'ASC' ? 'ASC' : 'DESC';
+    // デフォルト: 100件ずつ, オフセット0
+    const l = parseInt(limit) || 100;
+    const o = parseInt(offset) || 0;
+
     let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) WHERE 1=1`;
     let params = []; let pIdx = 1;
     
@@ -191,106 +174,30 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     if (q) { 
         const keywords = q.replace(/　/g, ' ').trim().split(/\s+/); 
         keywords.forEach(word => { 
-            // 空文字チェックを入れる
             if(word) {
                 sql += ` AND (i.title ILIKE $${pIdx} OR p.product_name ILIKE $${pIdx} OR p.model_num1 ILIKE $${pIdx} OR p.model_num2 ILIKE $${pIdx} OR p.model_num3 ILIKE $${pIdx} OR p.model_num4 ILIKE $${pIdx} OR p.product_code ILIKE $${pIdx})`; 
                 params.push(`%${word}%`); pIdx++;
             }
         }); 
     }
-    sql += ` ORDER BY ${s} ${d} LIMIT 300`; 
+    
+    // LIMIT / OFFSET を適用
+    sql += ` ORDER BY ${s} ${d} LIMIT $${pIdx++} OFFSET $${pIdx++}`; 
+    params.push(l, o);
+
     const { rows } = await pool.query(sql, params); 
     res.json(rows);
 }));
 
-app.post('/upload', isAuthenticated, (req, res, next) => {
-    upload.array('imageFiles', 100)(req, res, (err) => { if (err) return next(err); next(); });
-}, apiHandler(async (req, res) => { 
-    const { category1, category2, category3, folderName } = req.body; 
-    if (!req.files || req.files.length === 0) return res.status(400).json({ message: 'No files' }); 
-    const c1 = category1.trim(); const c2 = category2.trim(); const c3 = category3.trim(); const f = folderName.trim(); 
-    const values = [], params = []; let idx = 1; 
-    for (const file of req.files) { 
-        const name = Buffer.from(file.originalname, 'latin1').toString('utf8'); 
-        const key = `${c1}/${c2}/${c3}/${f}/${name}`; 
-        await s3Client.send(new PutObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key, Body: file.buffer, ContentType: file.mimetype })); 
-        const url = `${process.env.R2_PUBLIC_URL}/${encodeURIComponent(key)}`; 
-        values.push(`($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`); 
-        params.push(key, url, c1, c2, c3, f); 
-    } 
-    await pool.query(`INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) VALUES ${values.join(', ')}`, params); 
-    res.json({ message: `${req.files.length}件 保存完了` }); 
-}));
-
-app.post('/api/products/export-csv', isAuthenticated, apiHandler(async (req, res) => {
-    const { targetIds } = req.body;
-    let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename))`;
-    let params = [];
-    if (targetIds && Array.isArray(targetIds) && targetIds.length > 0) {
-        sql += ` WHERE i.id = ANY($1::int[])`; 
-        params.push(targetIds);
-    } else {
-        return res.status(400).send('対象が選択されていません');
-    }
-    sql += ` ORDER BY i.created_at DESC`;
-    const { rows } = await pool.query(sql, params);
-    if (rows.length === 0) return res.status(404).send('データが見つかりません');
-    const csvData = rows.map(item => ({
-        '画像URL': item.url || '',
-        'ファイル名': item.title ? item.title.split('/').pop() : '',
-        '商品名': item.product_name || '',
-        '型番': [item.model_num1, item.model_num2].filter(Boolean).join(' '),
-        '在庫': item.stock || 0,
-        'EC価格': item.ec_price || 0,
-        'メルカリ価格': item.mercari_price || 0,
-        '登録日': item.created_at ? new Date(item.created_at).toLocaleDateString('ja-JP') : ''
-    }));
-    const json2csvParser = new Parser({ withBOM: true });
-    const csv = json2csvParser.parse(csvData);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="selected_products.csv"');
-    res.status(200).send(csv);
-}));
-
-// その他のAPIは省略せずそのまま
-const getCategoryList = (col, level) => apiHandler(async (req, res) => {
-    let query = "", params = [];
-    let countQuery = "", countParams = [];
-    if (level === 1) {
-        query = `SELECT ${col} FROM images UNION SELECT ${col} FROM csv_uploads ORDER BY ${col}`;
-        countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images GROUP BY ${col}`;
-    } else if (level === 2) {
-        query = `SELECT ${col} FROM images WHERE category_1=$1 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$2 ORDER BY ${col}`;
-        params = [req.params.c1, req.params.c1];
-        countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images WHERE category_1=$1 GROUP BY ${col}`;
-        countParams = [req.params.c1];
-    } else {
-        query = `SELECT ${col} FROM images WHERE category_1=$1 AND category_2=$2 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$3 AND category_2=$4 ORDER BY ${col}`;
-        params = [req.params.c1, req.params.c2, req.params.c1, req.params.c2];
-        countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images WHERE category_1=$1 AND category_2=$2 GROUP BY ${col}`;
-        countParams = [req.params.c1, req.params.c2];
-    }
-    const { rows: nameRows } = await pool.query(query, params);
-    const distinctNames = [...new Set(nameRows.map(r => r[col]))].filter(v => v);
-    const { rows: countRows } = await pool.query(countQuery, countParams);
-    const countMap = {};
-    countRows.forEach(r => countMap[r.name] = parseInt(r.cnt));
-    const result = distinctNames.map(name => ({ name: name, count: countMap[name] || 0 }));
-    res.json(result);
-});
+app.post('/upload', isAuthenticated, (req, res, next) => { upload.array('imageFiles', 100)(req, res, (err) => { if (err) return next(err); next(); }); }, apiHandler(async (req, res) => { const { category1, category2, category3, folderName } = req.body; if (!req.files || req.files.length === 0) return res.status(400).json({ message: 'No files' }); const c1 = category1.trim(); const c2 = category2.trim(); const c3 = category3.trim(); const f = folderName.trim(); const values = [], params = []; let idx = 1; for (const file of req.files) { const name = Buffer.from(file.originalname, 'latin1').toString('utf8'); const key = `${c1}/${c2}/${c3}/${f}/${name}`; await s3Client.send(new PutObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key, Body: file.buffer, ContentType: file.mimetype })); const url = `${process.env.R2_PUBLIC_URL}/${encodeURIComponent(key)}`; values.push(`($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`); params.push(key, url, c1, c2, c3, f); } await pool.query(`INSERT INTO images (title, url, category_1, category_2, category_3, folder_name) VALUES ${values.join(', ')}`, params); res.json({ message: `${req.files.length}件 保存完了` }); }));
+app.post('/api/products/export-csv', isAuthenticated, apiHandler(async (req, res) => { const { targetIds } = req.body; let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename))`; let params = []; if (targetIds && Array.isArray(targetIds) && targetIds.length > 0) { sql += ` WHERE i.id = ANY($1::int[])`; params.push(targetIds); } else { return res.status(400).send('対象が選択されていません'); } sql += ` ORDER BY i.created_at DESC`; const { rows } = await pool.query(sql, params); if (rows.length === 0) return res.status(404).send('データが見つかりません'); const csvData = rows.map(item => ({ '画像URL': item.url || '', 'ファイル名': item.title ? item.title.split('/').pop() : '', '商品名': item.product_name || '', '型番': [item.model_num1, item.model_num2].filter(Boolean).join(' '), '在庫': item.stock || 0, 'EC価格': item.ec_price || 0, 'メルカリ価格': item.mercari_price || 0, '登録日': item.created_at ? new Date(item.created_at).toLocaleDateString('ja-JP') : '' })); const json2csvParser = new Parser({ withBOM: true }); const csv = json2csvParser.parse(csvData); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="selected_products.csv"'); res.status(200).send(csv); }));
+// その他API群 (省略せず記述)
+const getCategoryList = (col, level) => apiHandler(async (req, res) => { let query = "", params = []; let countQuery = "", countParams = []; if (level === 1) { query = `SELECT ${col} FROM images UNION SELECT ${col} FROM csv_uploads ORDER BY ${col}`; countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images GROUP BY ${col}`; } else if (level === 2) { query = `SELECT ${col} FROM images WHERE category_1=$1 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$2 ORDER BY ${col}`; params = [req.params.c1, req.params.c1]; countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images WHERE category_1=$1 GROUP BY ${col}`; countParams = [req.params.c1]; } else { query = `SELECT ${col} FROM images WHERE category_1=$1 AND category_2=$2 UNION SELECT ${col} FROM csv_uploads WHERE category_1=$3 AND category_2=$4 ORDER BY ${col}`; params = [req.params.c1, req.params.c2, req.params.c1, req.params.c2]; countQuery = `SELECT ${col} as name, COUNT(*) as cnt FROM images WHERE category_1=$1 AND category_2=$2 GROUP BY ${col}`; countParams = [req.params.c1, req.params.c2]; } const { rows: nameRows } = await pool.query(query, params); const distinctNames = [...new Set(nameRows.map(r => r[col]))].filter(v => v); const { rows: countRows } = await pool.query(countQuery, countParams); const countMap = {}; countRows.forEach(r => countMap[r.name] = parseInt(r.cnt)); const result = distinctNames.map(name => ({ name: name, count: countMap[name] || 0 })); res.json(result); });
 app.get('/api/cat1', isAuthenticated, getCategoryList('category_1', 1));
 app.get('/api/cat2/:c1', isAuthenticated, getCategoryList('category_2', 2));
 app.get('/api/cat3/:c1/:c2', isAuthenticated, getCategoryList('category_3', 3));
-app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res) => { 
-    const { rows } = await pool.query(`SELECT folder_name as name, COUNT(*) as count FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 GROUP BY folder_name ORDER BY folder_name`, [req.params.c1, req.params.c2, req.params.c3]);
-    res.json(rows.map(r => ({ name: r.name, count: parseInt(r.count) })));
-}));
-app.get('/api/products/stats', isAuthenticated, apiHandler(async (req, res) => {
-    const imgCount = (await pool.query('SELECT COUNT(*) FROM images')).rows[0].count;
-    const prodCount = (await pool.query('SELECT COUNT(*) FROM product_info')).rows[0].count;
-    const linkedCount = (await pool.query(`SELECT COUNT(DISTINCT i.id) FROM images i JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename))`)).rows[0].count;
-    res.json({ images: imgCount, products: prodCount, linked: linkedCount });
-}));
+app.get('/api/folders/:c1/:c2/:c3', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query(`SELECT folder_name as name, COUNT(*) as count FROM images WHERE category_1=$1 AND category_2=$2 AND category_3=$3 GROUP BY folder_name ORDER BY folder_name`, [req.params.c1, req.params.c2, req.params.c3]); res.json(rows.map(r => ({ name: r.name, count: parseInt(r.count) }))); }));
+app.get('/api/products/stats', isAuthenticated, apiHandler(async (req, res) => { const imgCount = (await pool.query('SELECT COUNT(*) FROM images')).rows[0].count; const prodCount = (await pool.query('SELECT COUNT(*) FROM product_info')).rows[0].count; const linkedCount = (await pool.query(`SELECT COUNT(DISTINCT i.id) FROM images i JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename))`)).rows[0].count; res.json({ images: imgCount, products: prodCount, linked: linkedCount }); }));
 app.get('/api/products/all', isAuthenticated, apiHandler(async (req, res) => { const { rows } = await pool.query('SELECT * FROM product_info ORDER BY updated_at DESC LIMIT 500'); res.json(rows); }));
 app.get('/api/debug/mismatch', isAuthenticated, apiHandler(async (req, res) => { try { const prodRows = await pool.query(`SELECT product_name, image_filename, product_code, model_num1 FROM product_info p WHERE p.image_filename IS NOT NULL AND p.image_filename <> '' AND NOT EXISTS (SELECT 1 FROM images i WHERE i.title LIKE '%' || p.image_filename) LIMIT 5`); const imgRows = await pool.query(`SELECT title FROM images i WHERE NOT EXISTS (SELECT 1 FROM product_info p WHERE p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || p.image_filename) ORDER BY created_at DESC LIMIT 5`); res.json({ unlinkedProducts: prodRows.rows, unlinkedImages: imgRows.rows }); } catch(e) { res.status(500).json({message: 'Error: ' + e.message}); } }));
 app.get('/api/products/template', isAuthenticated, (req, res) => { const header = "商品名,型番1,型番2,型番3,型番4,状態,カードのシリーズ,在庫,ECサイト価格,メルカリ価格,商品コード,商品画像名\n"; const example = "テストカード,DM-01,,,A,基本セット,10,100,300,CODE001,DM-01.jpg\n"; res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="template.csv"'); res.send('\uFEFF' + header + example); });
