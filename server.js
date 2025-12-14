@@ -71,9 +71,9 @@ app.use(session({
     proxy: true,
     cookie: { 
         maxAge: 30 * 24 * 60 * 60 * 1000, 
-        secure: true,        
+        secure: true,        // Render(HTTPS)用
         httpOnly: true, 
-        sameSite: 'none'     
+        sameSite: 'none'     // クロスオリジン用
     } 
 }));
 
@@ -154,7 +154,7 @@ app.post('/api/auth/logout', (req, res, next) => { req.logout((err) => { if(err)
 app.get('/api/auth/check', (req, res) => { if (req.isAuthenticated()) res.json({ loggedIn: true, username: req.user.username }); else res.json({ loggedIn: false }); });
 app.post('/api/admin/init-db', isAuthenticated, apiHandler(async (req, res) => { await createTable(); res.json({ message: 'データベース構成を更新しました。' }); }));
 
-// ★★★ 修正版: 検索API (SQLパラメータ順序修正) ★★★
+// ★★★ 修正版: 検索API (パラメータ処理を安全化) ★★★
 app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     const { cat1, cat2, cat3, folder, q, sort, order, limit, offset } = req.query;
 
@@ -164,25 +164,28 @@ app.get('/api/search', isAuthenticated, apiHandler(async (req, res) => {
     const o = parseInt(offset) || 0;
 
     let sql = `SELECT i.*, p.product_name, p.model_num1, p.model_num2, p.model_num3, p.model_num4, p.ec_price, p.mercari_price, p.stock FROM images i LEFT JOIN product_info p ON (p.image_filename IS NOT NULL AND p.image_filename <> '' AND i.title LIKE '%' || TRIM(p.image_filename)) WHERE 1=1`;
-    let params = []; let pIdx = 1;
+    let params = [];
     
-    if (cat1) { sql += ` AND i.category_1=$${pIdx++}`; params.push(cat1); }
-    if (cat2) { sql += ` AND i.category_2=$${pIdx++}`; params.push(cat2); }
-    if (cat3) { sql += ` AND i.category_3=$${pIdx++}`; params.push(cat3); }
-    if (folder) { sql += ` AND i.folder_name=$${pIdx++}`; params.push(folder); }
+    // パラメータ追加ヘルパー（インデックスズレ防止）
+    const addParam = (val) => { params.push(val); return params.length; };
+
+    if (cat1) sql += ` AND i.category_1=$${addParam(cat1)}`;
+    if (cat2) sql += ` AND i.category_2=$${addParam(cat2)}`;
+    if (cat3) sql += ` AND i.category_3=$${addParam(cat3)}`;
+    if (folder) sql += ` AND i.folder_name=$${addParam(folder)}`;
+    
     if (q) { 
         const keywords = q.replace(/　/g, ' ').trim().split(/\s+/); 
         keywords.forEach(word => { 
             if(word) {
-                sql += ` AND (i.title ILIKE $${pIdx} OR p.product_name ILIKE $${pIdx} OR p.model_num1 ILIKE $${pIdx} OR p.model_num2 ILIKE $${pIdx} OR p.model_num3 ILIKE $${pIdx} OR p.model_num4 ILIKE $${pIdx} OR p.product_code ILIKE $${pIdx})`; 
-                params.push(`%${word}%`); pIdx++;
+                const idx = addParam(`%${word}%`);
+                sql += ` AND (i.title ILIKE $${idx} OR p.product_name ILIKE $${idx} OR p.model_num1 ILIKE $${idx} OR p.model_num2 ILIKE $${idx} OR p.model_num3 ILIKE $${idx} OR p.model_num4 ILIKE $${idx} OR p.product_code ILIKE $${idx})`; 
             }
         }); 
     }
     
     // LIMIT / OFFSET を最後に追加
-    sql += ` ORDER BY ${s} ${d} LIMIT $${pIdx++} OFFSET $${pIdx++}`; 
-    params.push(l, o);
+    sql += ` ORDER BY ${s} ${d} LIMIT $${addParam(l)} OFFSET $${addParam(o)}`; 
 
     const { rows } = await pool.query(sql, params); 
     res.json(rows);
