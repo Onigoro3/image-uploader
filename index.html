@@ -216,7 +216,7 @@
 
                 <div class="csv-btn-group">
                     <button id="dlSelectedBtn" class="btn-csv-select" title="チェックした商品のみ">✔ 選択CSV</button>
-                    <button id="dlAllBtn" class="btn-csv-all" title="現在表示されている全件">📥 全件CSV</button>
+                    <button id="dlAllBtn" class="btn-csv-all" title="現在選択中の条件に一致する全件">📥 全件CSV</button>
                 </div>
             </div>
 
@@ -234,7 +234,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simplelightbox/2.14.2/simple-lightbox.min.js"></script>
     <script>
-        // 現在表示されている画像のIDリストを保持する変数
+        // 現在表示されている画像のIDリスト（全件DLでは使わず、選択DLでのみ使用）
         let currentDisplayedIds = [];
 
         document.addEventListener('DOMContentLoaded', async () => {
@@ -350,7 +350,6 @@
             } catch(e) { container.innerHTML += '<p style="color:red;">Error</p>'; }
         }
 
-        // ▼▼ 画像読み込み関数の修正版（チェックボックス追加） ▼▼
         async function loadImages(f, q='') {
             if(!f && !q) return;
             els.gal.innerHTML = '<p style="grid-column:span 4; text-align:center; color:#666;">読み込み中...<\/p>';
@@ -363,7 +362,7 @@
                 currentDisplayedIds = [];
 
                 d.forEach(img => {
-                    // 全件DL用にIDを保存
+                    // IDを保存(選択DL用)
                     if(img.id) currentDisplayedIds.push(img.id);
 
                     const div = document.createElement('div'); div.className = 'image-item';
@@ -426,32 +425,38 @@
         function checkNew(s,i){i.style.display=s.value==='_new_'?'block':'none';}
         async function uploadFiles(){const fd=new FormData();fd.append('category1',els.c1.value==='_new_'?els.c1n.value:els.c1.value);fd.append('category2',els.c2.value==='_new_'?els.c2n.value:els.c2.value);fd.append('category3',els.c3.value==='_new_'?els.c3n.value:els.c3.value);fd.append('folderName',els.folder.value);for(let f of els.file.files)fd.append('imageFiles',f);els.stat.innerText='UP...';try{const r=await fetch('/upload',{method:'POST',body:fd});if(!r.ok)throw 1;els.stat.innerText='OK';els.file.value='';loadCat1();}catch(e){els.stat.innerText='Err';}}
 
-        // ▼▼ CSVダウンロード用ロジック ▼▼
+        // ▼▼ CSVダウンロード用ロジック（修正版：ID指定と条件指定の両対応） ▼▼
         const CSV_API_URL = "/api/products/export-csv"; 
 
-        async function executeCsvDownload(ids) {
-            if (!ids || ids.length === 0) {
+        async function executeCsvDownload(ids, filters = null) {
+            if ((!ids || ids.length === 0) && !filters) {
                 alert("対象データがありません");
                 return;
             }
             try {
-                const originalText = els.stat.innerText;
                 els.stat.innerText = "CSV作成中..."; 
+
+                // filtersがあれば条件全件、なければID選択
+                const bodyData = filters ? { filters: filters } : { targetIds: ids };
 
                 const response = await fetch(CSV_API_URL, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ targetIds: ids }) 
+                    body: JSON.stringify(bodyData) 
                 });
 
-                if (!response.ok) throw new Error("Server Error");
+                if (!response.ok) {
+                    const err = await response.text();
+                    throw new Error(err || "Server Error");
+                }
 
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
                 const dateStr = new Date().toISOString().slice(0,19).replace(/[-T:]/g,"");
-                a.download = `products_${dateStr}.csv`;
+                // ファイル名を条件によって少し変える
+                a.download = `products_${filters ? 'all' : 'selected'}_${dateStr}.csv`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -460,7 +465,7 @@
 
             } catch (e) {
                 console.error(e);
-                alert("CSVダウンロードに失敗しました。");
+                alert("CSVダウンロードに失敗しました: " + e.message);
                 els.stat.innerText = "Error";
             }
         }
@@ -472,18 +477,33 @@
                 return;
             }
             const ids = Array.from(checkboxes).map(cb => cb.value);
-            executeCsvDownload(ids);
+            // ID指定モードで実行
+            executeCsvDownload(ids, null);
         }
 
         function downloadAllDisplayedItems() {
-            if (currentDisplayedIds.length === 0) {
-                alert("表示されているデータがありません。");
-                return;
+            // 現在の選択条件を取得
+            const currentFilters = {
+                cat1: sels.c1 || null,
+                cat2: sels.c2 || null,
+                cat3: sels.c3 || null,
+                folder: sels.f || null,
+                q: els.search.value || ''
+            };
+
+            // 条件が何もない場合(全データDL)の確認
+            if (!currentFilters.cat1 && !currentFilters.q && !currentFilters.folder) {
+                if(!confirm("カテゴリやフォルダが選択されていません。\nデータベース内の全画像をCSV出力しますか？（時間がかかる可能性があります）")) {
+                    return;
+                }
+            } else {
+                if(!confirm(`現在の条件（${currentFilters.folder ? 'フォルダ: ' + currentFilters.folder : '選択中カテゴリ'}）に一致するすべてのデータをCSV出力しますか？\n※表示件数に関わらず全件ダウンロードされます。`)){
+                    return;
+                }
             }
-            if(!confirm(`現在表示されている ${currentDisplayedIds.length} 件をすべてCSV出力しますか？`)){
-                return;
-            }
-            executeCsvDownload(currentDisplayedIds);
+
+            // フィルタモードで実行 (IDはnull)
+            executeCsvDownload(null, currentFilters);
         }
     </script>
 </body>
